@@ -1,0 +1,15 @@
+[project]
+name = "home_patcher"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.12"
+dependencies = [
+    "tomlkit>=0.14.0",
+]
+
+[project.scripts]
+home_patcher = "home_patcher.main:main"
+
+[build-system]
+requires = ["uv_build"]
+build-backend = "uv_build"
