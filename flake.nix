@@ -1,5 +1,5 @@
 {
-  description = "mutable-file frontend/backend split repository";
+  description = "mutable-file Home Manager modules and runtime";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable?shallow=1";
@@ -13,36 +13,38 @@
     let
       systems = [ "x86_64-linux" "aarch64-darwin" ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
-      mkFrontendEvalTest =
+
+      mkHomeManagerEvalTest =
         {
           pkgs,
-          backend,
+          runtime,
           system,
         }:
         let
-          frontendEvalResults = import ./frontend/tests/eval.nix {
+          homeManagerEvalResults = import ./modules/home-manager/tests/eval.nix {
             repoRoot = ./.;
-            inherit self nixpkgs home-manager system backend;
+            inherit self nixpkgs home-manager system runtime;
           };
         in
-        pkgs.runCommand "frontend-eval-tests" { } ''
-          printf '%s\n' ${pkgs.lib.escapeShellArg (builtins.toJSON frontendEvalResults)} > results.json
+        pkgs.runCommand "home-manager-eval-tests" { } ''
+          printf '%s\n' ${pkgs.lib.escapeShellArg (builtins.toJSON homeManagerEvalResults)} > results.json
           if [ "$(cat results.json)" != '[]' ]; then
-            echo "frontend eval tests failed: $(cat results.json)" >&2
+            echo "home-manager eval tests failed: $(cat results.json)" >&2
             exit 1
           fi
           touch $out
         '';
+
       mkNamedTests =
         {
           pkgs,
-          backend,
+          runtime,
           system,
         }:
         {
-          backend-pytest = backend.tests.pytest;
-          frontend-eval = mkFrontendEvalTest {
-            inherit pkgs backend system;
+          runtime-pytest = runtime.tests.pytest;
+          home-manager-eval = mkHomeManagerEvalTest {
+            inherit pkgs runtime system;
           };
         };
     in
@@ -52,15 +54,15 @@
       packages = forAllSystems (system:
         let
           pkgs = import nixpkgs { inherit system; };
-          backend = pkgs.callPackage ./backend/package.nix { };
+          runtime = pkgs.callPackage ./runtime/package.nix { };
           namedTests = mkNamedTests {
-            inherit pkgs backend system;
+            inherit pkgs runtime system;
           };
         in
         namedTests
         // {
-          default = backend;
-          mutable-file-backend = backend;
+          default = runtime;
+          mutable-file-runtime = runtime;
         }
         // (nixpkgs.lib.mapAttrs' (name: value: {
           name = "test-${name}";
@@ -111,11 +113,11 @@
         {
           default = {
             type = "app";
-            program = nixpkgs.lib.getExe self.packages.${system}.mutable-file-backend;
+            program = nixpkgs.lib.getExe self.packages.${system}.mutable-file-runtime;
           };
-          mutable-file-backend = {
+          mutable-file-runtime = {
             type = "app";
-            program = nixpkgs.lib.getExe self.packages.${system}.mutable-file-backend;
+            program = nixpkgs.lib.getExe self.packages.${system}.mutable-file-runtime;
           };
           tests = {
             type = "app";
@@ -138,22 +140,21 @@
         });
 
       homeManagerModules.default = { pkgs, ... }: {
-        imports = [ ./frontend/modules/mutable-file ];
-        home.mutableFileBackend.package = self.packages.${pkgs.stdenv.hostPlatform.system}.mutable-file-backend;
+        imports = [ ./modules/home-manager/mutable-file ];
+        home.mutableFileRuntime.package = self.packages.${pkgs.stdenv.hostPlatform.system}.mutable-file-runtime;
       };
 
       checks = forAllSystems (system:
         let
-          pkgs = import nixpkgs { inherit system; };
           packages = self.packages.${system};
         in
         {
-          backend-pytest = packages.test-backend-pytest;
-          frontend-eval = packages.test-frontend-eval;
+          runtime-pytest = packages.test-runtime-pytest;
+          home-manager-eval = packages.test-home-manager-eval;
         });
 
-      test-backend-pytest = forAllSystems (system: self.packages.${system}.test-backend-pytest);
-      test-frontend-eval = forAllSystems (system: self.packages.${system}.test-frontend-eval);
+      test-runtime-pytest = forAllSystems (system: self.packages.${system}.test-runtime-pytest);
+      test-home-manager-eval = forAllSystems (system: self.packages.${system}.test-home-manager-eval);
       test-all = forAllSystems (system: self.packages.${system}.test-all);
     };
 }

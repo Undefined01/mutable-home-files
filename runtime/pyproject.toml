@@ -1,14 +1,14 @@
 [project]
-name = "home_patcher"
+name = "mutable_file_runtime"
 version = "0.1.0"
-description = "Add your description here"
+description = "Runtime for assembling and reconciling layered mutable files"
 requires-python = ">=3.12"
 dependencies = [
     "tomlkit>=0.14.0",
 ]
 
 [project.scripts]
-home_patcher = "home_patcher.main:main"
+mutable-file-runtime = "mutable_file_runtime.main:main"
 
 [build-system]
 requires = ["uv_build"]

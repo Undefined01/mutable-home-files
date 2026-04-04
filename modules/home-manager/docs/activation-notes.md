@@ -5,9 +5,9 @@
 Use Home Manager activation DAG entries after `writeBoundary` for any side-effecting action:
 
 ```nix
-home.activation.mutableFile = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+home.activation.mutableFiles = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
   verboseEcho "Reconciling mutable files"
-  run --silence ${lib.getExe backend} --task-file ${taskFile}
+  run --silence ${lib.getExe runtime} --task-file ${taskFile}
 '';
 ```
 
@@ -21,12 +21,12 @@ This keeps the hook compatible with Home Manager's activation-driver expectation
 
 Persistent Linux user integration can be expressed with `systemd.user.services`, but it is not the default execution path for `mutable-file`.
 
-The default switch-time reconcile path is `home.activation` only. Add a Linux user unit later only if the backend grows a persistent or on-demand daemon mode.
+The default switch-time reconcile path is `home.activation` only. Add a Linux user unit later only if the runtime grows a persistent or on-demand daemon mode.
 
 ## Darwin integration
 
 Persistent Darwin user integration can be expressed with `launchd.agents`, but it is not the default execution path for `mutable-file`.
 
-The default switch-time reconcile path is `home.activation` only. Add a Darwin launch agent later only if the backend grows a persistent or on-demand daemon mode.
+The default switch-time reconcile path is `home.activation` only. Add a Darwin launch agent later only if the runtime grows a persistent or on-demand daemon mode.
 
-Home Manager's Darwin launch agent installation behavior is itself implemented in activation logic, so frontend code must treat it as a platform-specific transport rather than a replacement for activation.
+Home Manager's Darwin launch agent installation behavior is itself implemented in activation logic, so module code must treat it as a platform-specific transport rather than a replacement for activation.

@@ -2,47 +2,99 @@
 
 ## Split responsibilities
 
-### Frontend
+### Home Manager module
 
-The frontend is pure Nix.
+The Home Manager side is pure Nix.
 
 Responsibilities:
 
-- define `home.mutableFile`
-- define `home.mutableFileBackend.package`
-- validate user options
-- normalize entries into task files
+- define `home.mutableFiles`
+- define `home.mutableFileRuntime.package`
+- define recursive ownership policy inputs
+- validate target, ownership, and layer options
+- normalize file definitions into runtime task files
 - register switch-time activation hooks via `home.activation`
 - optionally attach Linux and Darwin specific persistent integration points later, without replacing activation
-- invoke the packaged backend binary exported by the flake or explicitly injected by callers
+- invoke the packaged runtime binary exported by the flake or explicitly injected by callers
 
-### Backend
+### Runtime
 
-The backend is a Python tool.
+The runtime is a Python CLI.
 
 Responsibilities:
 
-- load task files emitted by the frontend
-- use packaged helper tools such as `yq-go` where Python stdlib is insufficient
-- compute managed subtrees
-- compare current state against baseline
+- load task files emitted by the Home Manager module
+- load ordered layers from declarative values, store paths, and runtime paths
+- merge layers into one desired object while rejecting ambiguous overlap
+- evaluate local files through recursive ownership policy
+- compare managed state against recorded runtime state
 - reconcile managed content into target files while preserving unmanaged TOML and YAML content where the adapter model allows it
-- replace managed subtrees exactly rather than deep-merging stale keys back in
-- atomically write targets and update baseline state
+- atomically write targets and update runtime state
+
+## Core design constraints
+
+The system is designed around these constraints:
+
+- layer overlap must be explicit and deterministic
+- undeclared fields need different handling in different subtrees
+- local state must not be silently taken over when a layer starts managing a path
+- deletion must only target paths that were previously managed
+- YAML and TOML comments should survive outside the managed write set whenever possible
+
+## Ownership model
+
+The runtime applies one recursive ownership mode at each path.
+
+- `declared`: only layer-declared fields are managed; undeclared fields are ignored
+- `sealed`: only layer-declared fields are managed; undeclared fields are conflicts
+- `local`: the subtree is entirely local and runtime-transparent
+
+The effective mode is resolved by longest matching rule, falling back to the file's default ownership mode.
+
+## Layer merge model
+
+The runtime first builds a single desired object from all layers.
+
+Allowed merge:
+
+- object with object, merged recursively
+
+Rejected merge:
+
+- scalar with scalar
+- scalar with object
+- scalar with array
+- array with array
+- array with object
+- array with scalar
+
+Rejected overlap is a configuration error, not a local-file conflict.
+
+## State model
+
+The runtime keeps one state record per target entry.
+
+That state must be rich enough to answer:
+
+- which paths were previously managed
+- what values those paths last converged to
+- which ownership policy was active during the last successful apply
+
+Without that information, the runtime cannot distinguish managed deletion from never-managed unknown fields or safe takeover from destructive overwrite.
 
 ## Packaging model
 
-- `backend/package.nix` builds the Python CLI as the `mutable-file-backend` executable.
+- `runtime/package.nix` builds the Python CLI as the `mutable-file-runtime` executable.
 - The wrapper sets `MUTABLE_FILE_YQ_BIN` to the packaged `yq-go` binary, so runtime format adaptation does not depend on ambient `PATH` state.
-- `backend/package.nix` also exports package-level `passthru.tests.pytest`, following the nixpkgs pattern of keeping package tests buildable without changing the main output.
-- `flake.nix` exports the backend as both `packages.<system>.mutable-file-backend` and `packages.<system>.default`.
-- `flake.nix` also exports `apps.<system>.mutable-file-backend` for direct execution, a default `devShell` with `python3`, `pytest`, `yq-go`, and `nixfmt-tree`, and lightweight flake checks for frontend evaluation plus backend package tests.
+- `runtime/package.nix` also exports package-level `passthru.tests.pytest`, following the nixpkgs pattern of keeping package tests buildable without changing the main output.
+- `flake.nix` exports the runtime as both `packages.<system>.mutable-file-runtime` and `packages.<system>.default`.
+- `flake.nix` also exports `apps.<system>.mutable-file-runtime` for direct execution, a default `devShell` with `python3`, `pytest`, `yq-go`, and `nixfmt-tree`, and lightweight flake checks for Home Manager evaluation plus runtime package tests.
 
 ## Testing model
 
-- Backend package tests follow the nixpkgs `passthru.tests` style: the package exposes a separate pytest derivation so package verification is buildable without changing the main package output.
-- Frontend module tests follow the Home Manager style more closely: they are lightweight evaluation/golden-style checks over generated task payloads and activation blocks, not VM tests.
-- Full NixOS-style VM integration tests are still deferred because the current module primarily generates user configuration and switch-time tasks rather than system services.
+- Runtime package tests follow the nixpkgs `passthru.tests` style: the package exposes a separate pytest derivation so package verification is buildable without changing the main package output.
+- Home Manager module tests stay in the lightweight evaluation lane: they assert on generated task payloads and activation blocks rather than booting a VM.
+- Full NixOS-style VM integration tests are still deferred because the current module primarily generates user configuration and switch-time tasks rather than long-running services.
 
 ## Home Manager integration notes
 
@@ -51,9 +103,9 @@ Responsibilities:
 The primary switch-time integration point is:
 
 ```nix
-home.activation.<name> = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+home.activation.mutableFiles = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
   verboseEcho "Reconciling mutable files"
-  run --silence ${lib.getExe backend} --task-file ${taskFile}
+  run --silence ${lib.getExe runtime} --task-file ${taskFile}
 '';
 ```
 

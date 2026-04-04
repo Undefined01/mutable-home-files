@@ -1,5 +1,5 @@
 .pytest_cache/
 __pycache__/
-backend/tests/__pycache__/
+runtime/tests/__pycache__/
 *.pyc
 result

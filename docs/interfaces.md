@@ -1,14 +1,14 @@
 # Interfaces
 
-## Frontend -> Backend task file
+## Home Manager module -> Runtime task file
 
-The frontend emits one aggregated task file in JSON.
+The Home Manager module emits one aggregated task file in JSON.
 
-Current shape:
+Current target shape for the next iteration:
 
 ```json
 {
-  "version": 1,
+  "version": 3,
   "entries": [
     {
       "entry_id": "<sha256(target)>",

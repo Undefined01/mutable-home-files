@@ -1,9 +1,13 @@
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
-from home_patcher.core import load_task_file, reconcile_entry
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from mutable_file_runtime.core import load_task_file, reconcile_entry
+
 
 def main(argv=None):
     parser = argparse.ArgumentParser()

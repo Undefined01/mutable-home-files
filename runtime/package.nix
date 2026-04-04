@@ -1,17 +1,10 @@
-{
-  lib,
-  makeWrapper,
-  nix,
-  python3,
-  python3Packages,
-  yq-go,
-}:
+{ python3, python3Packages, yq-go }:
 
 python3Packages.buildPythonApplication rec {
-  pname = "mutable-file-backend";
+  pname = "mutable-file-runtime";
   version = "0.1.0";
   pyproject = true;
-  
+
   src = ./.;
   build-system = [ python3Packages.uv-build ];
   dependencies = [ python3Packages.tomlkit python3Packages.uv-build ];
@@ -27,7 +20,7 @@ python3Packages.buildPythonApplication rec {
         export XDG_STATE_HOME="$TMPDIR/state"
         mkdir -p "$HOME" "$XDG_CACHE_HOME" "$XDG_STATE_HOME"
         export PYTHONPATH="$src"
-        pytest -p no:cacheprovider $src/backend/tests/test_core.py -q
+        pytest -p no:cacheprovider $src/runtime/tests/test_core.py -q
       '';
       installPhase = ''
         touch $out
@@ -35,5 +28,5 @@ python3Packages.buildPythonApplication rec {
     };
   };
 
-  meta.mainProgram = "mutable-file-backend";
+  meta.mainProgram = "mutable-file-runtime";
 }
