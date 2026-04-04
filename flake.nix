@@ -132,8 +132,7 @@
         {
           default = pkgs.mkShell {
             packages = with pkgs; [
-              (python3.withPackages (ps: [ ps.pytest ps.tomlkit ]))
-              yq-go
+              (python3.withPackages (ps: [ ps.pytest ps.ruamel-yaml ps.tomlkit ]))
               nixfmt-tree
             ];
           };

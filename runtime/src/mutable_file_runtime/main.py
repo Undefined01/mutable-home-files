@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import json
 import sys
@@ -6,7 +8,9 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from mutable_file_runtime.core import load_task_file, reconcile_entry
+from mutable_file_runtime.reconcile import reconcile_document
+from mutable_file_runtime.task_schema import load_task_file
+
 
 
 def main(argv=None):
@@ -15,15 +19,15 @@ def main(argv=None):
     parser.add_argument("--home-directory")
     args = parser.parse_args(argv)
 
-    payload = load_task_file(args.task_file)
+    task_file = load_task_file(args.task_file)
     home_directory = args.home_directory or str(Path.home())
 
-    for entry in payload["entries"]:
-        reconcile_entry(entry, home_directory=home_directory)
+    for document in task_file.documents:
+        reconcile_document(document, home_directory=home_directory)
 
     summary = {
-        "entry_count": len(payload["entries"]),
-        "targets": [entry["target"] for entry in payload["entries"]],
+        "document_count": len(task_file.documents),
+        "targets": [document.target for document in task_file.documents],
         "home_directory": home_directory,
     }
     print(json.dumps(summary))

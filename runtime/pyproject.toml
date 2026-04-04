@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Runtime for assembling and reconciling layered mutable files"
 requires-python = ">=3.12"
 dependencies = [
+    "ruamel.yaml>=0.18.0",
     "tomlkit>=0.14.0",
 ]
 
