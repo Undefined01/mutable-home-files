@@ -1,14 +1,12 @@
 from mutable_file_runtime.merge import merge_documents
-from mutable_file_runtime.model import Ownership, OwnershipOverride
+from mutable_file_runtime.model import Ownership, OwnershipRule
 
 
-
-def make_ownership(fallback="declared", overrides=()):
+def make_ownership(default="declared", rules=()):
     return Ownership(
-        fallback=fallback,
-        overrides=tuple(OwnershipOverride(path=tuple(path), mode=mode) for path, mode in overrides),
+        default=default,
+        rules=tuple(OwnershipRule(path=tuple(path), mode=mode) for path, mode in rules),
     )
-
 
 
 def test_declared_keeps_unknown_local_fields():
@@ -26,18 +24,16 @@ def test_declared_keeps_unknown_local_fields():
     }
 
 
-
 def test_sealed_rejects_unknown_local_fields():
     result = merge_documents(
         previous_desired={"credentials": {"api": {"token": "x"}}},
         current_local={"credentials": {"api": {"token": "x"}, "extra": True}},
         current_desired={"credentials": {"api": {"token": "x"}}},
-        ownership=make_ownership(overrides=[(["credentials"], "sealed")]),
+        ownership=make_ownership(rules=[(["credentials"], "sealed")]),
     )
 
     assert result.conflicts
     assert result.conflicts[0].path == ("credentials", "extra")
-
 
 
 def test_local_changes_to_unchanged_managed_fields_conflict():
@@ -52,7 +48,6 @@ def test_local_changes_to_unchanged_managed_fields_conflict():
     assert result.conflicts[0].path == ("app", "name")
 
 
-
 def test_desired_changes_apply_when_local_is_unchanged():
     result = merge_documents(
         previous_desired={"app": {"name": "old"}},
@@ -63,7 +58,6 @@ def test_desired_changes_apply_when_local_is_unchanged():
 
     assert result.conflicts == []
     assert result.final_document == {"app": {"name": "new"}}
-
 
 
 def test_same_value_convergence_is_not_a_conflict():
@@ -78,7 +72,6 @@ def test_same_value_convergence_is_not_a_conflict():
     assert result.final_document == {"app": {"name": "new"}}
 
 
-
 def test_takeover_equal_value_is_allowed():
     result = merge_documents(
         previous_desired={},
@@ -89,7 +82,6 @@ def test_takeover_equal_value_is_allowed():
 
     assert result.conflicts == []
     assert result.final_document == {"app": {"name": "demo"}}
-
 
 
 def test_takeover_different_value_conflicts():
@@ -104,7 +96,6 @@ def test_takeover_different_value_conflicts():
     assert result.conflicts[0].path == ("app", "name")
 
 
-
 def test_managed_deletion_keeps_unknown_declared_siblings():
     result = merge_documents(
         previous_desired={"credentials": {"user": "demo"}},
@@ -117,13 +108,12 @@ def test_managed_deletion_keeps_unknown_declared_siblings():
     assert result.final_document == {"credentials": {"runtime": "x"}}
 
 
-
 def test_local_ownership_stops_managing_previous_subtrees():
     result = merge_documents(
         previous_desired={"runtime": {"enabled": False}},
         current_local={"runtime": {"enabled": True}},
         current_desired={},
-        ownership=make_ownership(overrides=[(["runtime"], "local")]),
+        ownership=make_ownership(rules=[(["runtime"], "local")]),
     )
 
     assert result.conflicts == []

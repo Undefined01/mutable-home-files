@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -7,24 +8,24 @@ from mutable_file_runtime.state import load_state, state_path_for
 from mutable_file_runtime.task_schema import decode_task_file
 
 
-def make_document(tmp_path, **overrides):
+def make_document(tmp_path, target=None, **overrides):
+    if target is None:
+        target = str(tmp_path / "target" / ".config/app/config.json")
     payload = {
-        "version": 4,
+        "version": 5,
         "documents": [
             {
-                "id": "doc-1",
-                "target": ".config/app/config.json",
+                "target": target,
                 "format": "json",
                 "create": True,
                 "mode": "0600",
                 "state_dir": str(tmp_path / "state"),
                 "ownership": {
-                    "fallback": "declared",
-                    "overrides": [],
+                    "default": "declared",
+                    "rules": [],
                 },
                 "layers": [
                     {
-                        "id": "layer-defaults",
                         "name": "defaults",
                         "source": {
                             "kind": "inline",
@@ -45,9 +46,9 @@ def make_document(tmp_path, **overrides):
 def test_reconcile_first_apply_writes_target_and_state(runtime_env):
     document = make_document(runtime_env["root"])
 
-    reconcile_document(document, home_directory=runtime_env["home"])
+    reconcile_document(document)
 
-    target = runtime_env["home"] / ".config/app/config.json"
+    target = Path(document.target)
     assert json.loads(target.read_text()) == {"app": {"name": "demo"}}
 
     snapshot = load_state(document)
@@ -57,21 +58,20 @@ def test_reconcile_first_apply_writes_target_and_state(runtime_env):
 
 
 def test_reconcile_preserves_comments_when_only_managed_field_changes(runtime_env):
-    target = runtime_env["home"] / ".config/app/config.toml"
+    target = runtime_env["root"] / "target" / ".config/app/config.toml"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text('# top\n[app]\nname = "old"\n\n[runtime]\nenabled = true # keep\n')
 
     document = make_document(
         runtime_env["root"],
-        target=".config/app/config.toml",
+        target=str(target),
         format="toml",
         ownership={
-            "fallback": "declared",
-            "overrides": [{"path": ["runtime"], "mode": "local"}],
+            "default": "declared",
+            "rules": [{"path": ["runtime"], "mode": "local"}],
         },
         layers=[
             {
-                "id": "layer-defaults",
                 "name": "defaults",
                 "source": {
                     "kind": "inline",
@@ -89,9 +89,9 @@ def test_reconcile_preserves_comments_when_only_managed_field_changes(runtime_en
         json.dumps(
             {
                 "version": 1,
-                "document_id": document.id,
+                "target": document.target,
                 "format": document.format,
-                "ownership": {"fallback": "declared", "overrides": [{"path": ["runtime"], "mode": "local"}]},
+                "ownership": {"default": "declared", "rules": [{"path": ["runtime"], "mode": "local"}]},
                 "previous_applied": {"app": {"name": "old"}, "runtime": {"enabled": True}},
                 "previous_desired": {"app": {"name": "old"}},
             },
@@ -99,7 +99,7 @@ def test_reconcile_preserves_comments_when_only_managed_field_changes(runtime_en
         )
     )
 
-    reconcile_document(document, home_directory=runtime_env["home"])
+    reconcile_document(document)
 
     rendered = target.read_text()
     assert '# top' in rendered
@@ -108,19 +108,19 @@ def test_reconcile_preserves_comments_when_only_managed_field_changes(runtime_en
 
 
 def test_reconcile_conflicts_on_local_managed_changes(runtime_env):
-    target = runtime_env["home"] / ".config/app/config.json"
+    target = runtime_env["root"] / "target" / ".config/app/config.json"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps({"app": {"name": "manual"}}))
-    document = make_document(runtime_env["root"])
+    document = make_document(runtime_env["root"], target=str(target))
     state_path = state_path_for(document)
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(
         json.dumps(
             {
                 "version": 1,
-                "document_id": document.id,
+                "target": document.target,
                 "format": document.format,
-                "ownership": {"fallback": "declared", "overrides": []},
+                "ownership": {"default": "declared", "rules": []},
                 "previous_applied": {"app": {"name": "demo"}},
                 "previous_desired": {"app": {"name": "demo"}},
             },
@@ -129,19 +129,19 @@ def test_reconcile_conflicts_on_local_managed_changes(runtime_env):
     )
 
     with pytest.raises(RuntimeError):
-        reconcile_document(document, home_directory=runtime_env["home"])
+        reconcile_document(document)
 
 
 def test_reconcile_treats_old_state_versions_as_absent(runtime_env):
-    target = runtime_env["home"] / ".config/app/config.json"
+    target = runtime_env["root"] / "target" / ".config/app/config.json"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps({"app": {"name": "demo"}}))
-    document = make_document(runtime_env["root"])
+    document = make_document(runtime_env["root"], target=str(target))
     state_path = state_path_for(document)
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(json.dumps({"version": 0, "ignored": True}))
 
-    reconcile_document(document, home_directory=runtime_env["home"])
+    reconcile_document(document)
 
     assert json.loads(target.read_text()) == {"app": {"name": "demo"}}
     snapshot = load_state(document)

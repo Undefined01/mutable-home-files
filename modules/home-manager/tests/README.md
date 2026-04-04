@@ -8,12 +8,17 @@ The flake evaluates these tests directly during normal Nix evaluation and only u
 
 Current coverage includes:
 
-- option validation for layered `value`/`source`/`path` inputs
-- target path relativity
-- runtime path absoluteness
-- requirement that each mutable file defines at least one layer
-- task-file shape generation for schema v4 `documents` and ordered `layers`
+- empty configuration behavior: no activation entry and an empty `home.mutableFileInternal.taskPayload`
+- top-level shortcut normalization for `value`, runtime `source`, and store-backed `source`
+- a regression test for `value = config.programs.vscode.profiles.default.userSettings`, which previously crashed while validating shortcut-derived layers
+- explicit `layers` normalization, including generated fallback names, `from`, `to`, and `required`
+- target normalization to absolute paths and filtering of `enable = false` entries
+- entry-level exclusivity for top-level `value` / `source` / `layers`
+- layer-level exclusivity for `value` / `source`, including rejection of relative runtime string sources
+- ownership validation for `local` subtrees that must not also receive declarative layer writes
 - activation hook generation, including `run --silence`, `verboseEcho`, and `writeBoundary` ordering
 - default and custom `xdg.stateHome`
 - multi-entry ordering behavior
 - flake default module wiring that injects the packaged runtime
+
+These tests are intentionally evaluation-focused. They verify module semantics, normalization, and assertion behavior without depending on runtime file I/O.

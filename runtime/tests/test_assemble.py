@@ -6,25 +6,22 @@ from mutable_file_runtime.assemble import assemble_document
 from mutable_file_runtime.task_schema import decode_task_file
 
 
-
 def make_document(tmp_path, **overrides):
     payload = {
-        "version": 4,
+        "version": 5,
         "documents": [
             {
-                "id": "doc-1",
-                "target": ".config/app/config.json",
+                "target": "/home/tester/.config/app/config.json",
                 "format": "json",
                 "create": True,
                 "mode": "0600",
                 "state_dir": str(tmp_path / "state"),
                 "ownership": {
-                    "fallback": "declared",
-                    "overrides": [],
+                    "default": "declared",
+                    "rules": [],
                 },
                 "layers": [
                     {
-                        "id": "layer-defaults",
                         "name": "defaults",
                         "source": {
                             "kind": "inline",
@@ -42,7 +39,6 @@ def make_document(tmp_path, **overrides):
     return decode_task_file(payload).documents[0]
 
 
-
 def test_assemble_merges_inline_and_runtime_layers(tmp_path):
     secret = tmp_path / "secret.json"
     secret.write_text(json.dumps({"token": "secret-token"}))
@@ -50,7 +46,6 @@ def test_assemble_merges_inline_and_runtime_layers(tmp_path):
         tmp_path,
         layers=[
             {
-                "id": "layer-defaults",
                 "name": "defaults",
                 "source": {
                     "kind": "inline",
@@ -64,7 +59,6 @@ def test_assemble_merges_inline_and_runtime_layers(tmp_path):
                 "required": True,
             },
             {
-                "id": "layer-secret",
                 "name": "api-secret",
                 "source": {
                     "kind": "runtime_path",
@@ -88,14 +82,12 @@ def test_assemble_merges_inline_and_runtime_layers(tmp_path):
     }
 
 
-
 def test_assemble_skips_optional_missing_layers(tmp_path):
     missing = tmp_path / "missing.json"
     document = make_document(
         tmp_path,
         layers=[
             {
-                "id": "layer-defaults",
                 "name": "defaults",
                 "source": {
                     "kind": "inline",
@@ -106,7 +98,6 @@ def test_assemble_skips_optional_missing_layers(tmp_path):
                 "required": True,
             },
             {
-                "id": "layer-optional",
                 "name": "optional-secret",
                 "source": {
                     "kind": "runtime_path",
@@ -122,13 +113,11 @@ def test_assemble_skips_optional_missing_layers(tmp_path):
     assert assemble_document(document) == {"app": {"name": "demo"}}
 
 
-
 def test_assemble_rejects_scalar_overlap(tmp_path):
     document = make_document(
         tmp_path,
         layers=[
             {
-                "id": "layer-one",
                 "name": "one",
                 "source": {
                     "kind": "inline",
@@ -139,7 +128,6 @@ def test_assemble_rejects_scalar_overlap(tmp_path):
                 "required": True,
             },
             {
-                "id": "layer-two",
                 "name": "two",
                 "source": {
                     "kind": "inline",
@@ -156,17 +144,15 @@ def test_assemble_rejects_scalar_overlap(tmp_path):
         assemble_document(document)
 
 
-
 def test_assemble_rejects_local_targets(tmp_path):
     document = make_document(
         tmp_path,
         ownership={
-            "fallback": "declared",
-            "overrides": [{"path": ["runtime"], "mode": "local"}],
+            "default": "declared",
+            "rules": [{"path": ["runtime"], "mode": "local"}],
         },
         layers=[
             {
-                "id": "layer-one",
                 "name": "one",
                 "source": {
                     "kind": "inline",

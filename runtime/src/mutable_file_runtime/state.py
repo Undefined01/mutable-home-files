@@ -1,24 +1,26 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
-from .model import Ownership, OwnershipOverride, StateSnapshot
+from .model import Ownership, OwnershipRule, StateSnapshot
 
+
+def _target_key(target: str) -> str:
+    return hashlib.sha256(target.encode()).hexdigest()
 
 
 def state_path_for(document) -> Path:
-    return Path(document.state_dir) / document.id / "state.json"
-
+    return Path(document.state_dir) / _target_key(document.target) / "state.json"
 
 
 def _decode_ownership(payload) -> Ownership:
-    overrides = tuple(
-        OwnershipOverride(path=tuple(item["path"]), mode=item["mode"])
-        for item in payload.get("overrides", [])
+    rules = tuple(
+        OwnershipRule(path=tuple(item["path"]), mode=item["mode"])
+        for item in payload.get("rules", [])
     )
-    return Ownership(fallback=payload.get("fallback", "declared"), overrides=overrides)
-
+    return Ownership(default=payload.get("default", "declared"), rules=rules)
 
 
 def load_state(document):
@@ -30,13 +32,12 @@ def load_state(document):
         return None
     return StateSnapshot(
         version=1,
-        document_id=payload["document_id"],
+        target=payload["target"],
         format=payload["format"],
         ownership=_decode_ownership(payload.get("ownership", {})),
         previous_applied=payload.get("previous_applied", {}),
         previous_desired=payload.get("previous_desired", {}),
     )
-
 
 
 def write_state(document, snapshot: StateSnapshot) -> None:
@@ -46,13 +47,13 @@ def write_state(document, snapshot: StateSnapshot) -> None:
         json.dumps(
             {
                 "version": snapshot.version,
-                "document_id": snapshot.document_id,
+                "target": snapshot.target,
                 "format": snapshot.format,
                 "ownership": {
-                    "fallback": snapshot.ownership.fallback,
-                    "overrides": [
+                    "default": snapshot.ownership.default,
+                    "rules": [
                         {"path": list(item.path), "mode": item.mode}
-                        for item in snapshot.ownership.overrides
+                        for item in snapshot.ownership.rules
                     ],
                 },
                 "previous_applied": snapshot.previous_applied,

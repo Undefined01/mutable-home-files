@@ -8,18 +8,17 @@ Current schema:
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "documents": [
     {
-      "id": "<sha256(target)>",
-      "target": ".config/example/config.toml",
+      "target": "/home/user/.config/example/config.toml",
       "format": "toml",
       "create": true,
       "mode": "0600",
       "state_dir": "/home/user/.local/state/mutable-file",
       "ownership": {
-        "fallback": "declared",
-        "overrides": [
+        "default": "declared",
+        "rules": [
           {
             "path": ["runtimeState"],
             "mode": "local"
@@ -32,7 +31,6 @@ Current schema:
       },
       "layers": [
         {
-          "id": "<sha256(layer)>",
           "name": "defaults",
           "source": {
             "kind": "inline",
@@ -47,7 +45,6 @@ Current schema:
           "required": true
         },
         {
-          "id": "<sha256(layer)>",
           "name": "db-secret",
           "source": {
             "kind": "runtime_path",
@@ -67,19 +64,17 @@ Current schema:
 
 - `version`: task-file schema version.
 - `documents`: reconciliation work items.
-- `id`: stable identifier used for state storage.
-- `target`: target file path relative to `home.homeDirectory`.
+- `target`: absolute target file path.
 - `format`: one of `toml`, `yaml`, or `json`.
 - `create`: whether missing target files may be created.
 - `mode`: mode to apply to newly written files.
 - `state_dir`: directory used by runtime state storage.
 - `ownership`: recursive ownership policy.
-- `ownership.fallback`: default recursive policy when no more specific override matches.
-- `ownership.overrides`: path-specific ownership overrides.
-- `ownership.overrides[].path`: path segment list receiving the override.
-- `ownership.overrides[].mode`: one of `declared`, `sealed`, or `local`.
+- `ownership.default`: default recursive policy when no more specific rule matches.
+- `ownership.rules`: path-specific ownership rules.
+- `ownership.rules[].path`: path segment list receiving the rule.
+- `ownership.rules[].mode`: one of `declared`, `sealed`, or `local`.
 - `layers`: ordered source layers assembled into the desired document.
-- `layers[].id`: stable identifier for a normalized layer.
 - `layers[].name`: human-readable layer name.
 - `layers[].source.kind`: one of `inline`, `store_path`, or `runtime_path`.
 - `layers[].source.value`: inline document for `inline` sources.
@@ -98,11 +93,12 @@ Current path semantics:
 
 The Home Manager module guarantees:
 
-- each target is relative to `home.homeDirectory`
-- each file defines at least one layer
-- each layer sets exactly one source kind
+- each enabled entry normalizes to one absolute target path
+- each entry defines exactly one source form: `value`, `source`, or `layers`
+- top-level `value` and `source` normalize to a single default layer
+- each normalized layer defines exactly one source kind
 - runtime `runtime_path` inputs are absolute
-- ownership overrides use valid recursive modes
+- ownership rules use valid recursive modes
 - task files are generated at activation time from declarative options
 - the activation hook invokes a packaged runtime executable through `home.mutableFileRuntime.package`
 
@@ -121,6 +117,7 @@ The runtime guarantees:
 - local-history-aware conflict detection using previous state snapshots
 - write planning from `desired_diff` rather than whole-file replacement
 - format adaptation behind explicit implementations rather than shell snippets in the core merge logic
+- state-key derivation from the final absolute target path rather than external ids
 
 ## Layer merge contract
 
@@ -148,7 +145,7 @@ Ownership determines how undeclared fields and local-only subtrees are handled.
 - `sealed`: fields declared by layers are managed. Undeclared fields under this subtree are conflicts.
 - `local`: the subtree is runtime-transparent. Layers may not write into it, and local changes are ignored.
 
-Rules inherit recursively: a child path uses the most specific matching override, otherwise `fallback`.
+Rules inherit recursively: a child path uses the most specific matching rule, otherwise `default`.
 
 ## State contract
 
@@ -159,11 +156,11 @@ Current state shape:
 ```json
 {
   "version": 1,
-  "document_id": "<sha256(target)>",
+  "target": "/home/user/.config/example/config.toml",
   "format": "toml",
   "ownership": {
-    "fallback": "declared",
-    "overrides": []
+    "default": "declared",
+    "rules": []
   },
   "previous_applied": {
     "app": { "name": "demo" }
@@ -175,6 +172,17 @@ Current state shape:
 ```
 
 The runtime treats missing or incompatible state as if no previous state existed.
+
+## Edge cases
+
+The current interface and runtime semantics intentionally define these edge cases:
+
+- first apply with no state but an existing target uses takeover semantics and does not delete undeclared fields
+- a missing target with existing state is treated as a conflict rather than silently recreating the file
+- ownership changes to `local` stop management of that subtree without deleting local content
+- `sealed` rejects undeclared fields even if they predate the current run
+- layer `from` / `to` paths do not yet expose array addressing even though runtime edit operations do
+- old task files and old state snapshots are ignored rather than migrated
 
 ## Operation contract
 
@@ -199,7 +207,7 @@ Operation order matters. In particular, array edits must be applied in the order
 For each document the runtime:
 
 1. assembles `current_desired` from all layers
-2. loads `current_local` from the target file
+2. loads `current_local` from the absolute target path
 3. loads `previous_applied` and `previous_desired` from state if present
 4. computes `local_diff` and `desired_diff`
 5. detects ownership-aware conflicts from local changes and takeovers

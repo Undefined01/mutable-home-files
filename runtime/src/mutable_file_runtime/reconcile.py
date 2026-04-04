@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import tempfile
 from pathlib import Path
@@ -10,7 +9,6 @@ from .formats import get_format
 from .merge import merge_documents
 from .model import MISSING, StateSnapshot
 from .state import load_state, write_state
-
 
 
 def _atomic_write(path: Path, text: str, mode: str) -> None:
@@ -24,9 +22,8 @@ def _atomic_write(path: Path, text: str, mode: str) -> None:
     temp_path.replace(path)
 
 
-
-def reconcile_document(document, *, home_directory):
-    target_path = Path(home_directory) / document.target
+def reconcile_document(document):
+    target_path = Path(document.target)
     adapter = get_format(document.format)
     desired = assemble_document(document)
     state = load_state(document)
@@ -69,7 +66,7 @@ def reconcile_document(document, *, home_directory):
         document,
         StateSnapshot(
             version=1,
-            document_id=document.id,
+            target=document.target,
             format=document.format,
             ownership=document.ownership,
             previous_applied=merge_result.final_document,

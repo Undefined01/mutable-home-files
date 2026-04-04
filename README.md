@@ -27,27 +27,40 @@ The runtime is packaged as a Nix package and exposed from the flake as both `pac
 - `runtime/src/mutable_file_runtime/`: Python runtime implementation.
 - `runtime/tests/`: runtime unit tests.
 - `docs/`: cross-cutting architecture, interface, and implementation notes.
-- `docs/superpowers/specs/`: design specs written before major rewrites.
-- `docs/superpowers/plans/`: implementation plans for larger changes.
+
+## Why this exists
+
+`mutable-file` exists because two common configuration models are both too coarse on their own.
+
+- Whole-file declarative ownership is too rigid when an application needs to write local runtime state into the same file.
+- Whole-file local ownership is too weak when most of the file should still come from declarative configuration.
+
+The project therefore splits the problem into three independent concerns:
+
+- layers declare desired data from one or more sources
+- ownership controls how undeclared fields behave at each subtree
+- runtime state snapshots separate local edits from declarative edits across runs
+
+This lets declarative defaults, runtime secrets, and local application state coexist without silently overwriting one another.
 
 ## Home Manager model
 
-The module exposes `home.mutableFiles` for target definitions and `home.mutableFileRuntime.package` for runtime selection.
+The module exposes `home.mutableFile` for mutable target definitions and `home.mutableFileRuntime.package` for runtime selection.
 
-Each target file is defined as:
+Each mutable file entry is defined by:
 
-- a target-relative path under `home.homeDirectory`
+- `target`, defaulting to the attribute name and normalized to an absolute path
 - a file format (`json`, `yaml`, or `toml`)
-- a recursive ownership policy
-- one or more ordered `layers`
+- a recursive ownership policy using `default` and `rules`
+- exactly one source form: top-level `value`, top-level `source`, or explicit ordered `layers`
 
-Each layer declares exactly one source:
+Top-level `value` and `source` are shortcuts for a single default layer with `from = [ ]`, `to = [ ]`, and `required = true`.
 
-- `inline` content from Nix
+Layer sources support three normalized runtime kinds:
+
+- `inline` content from Nix values
 - `store_path` content available at evaluation time
-- `runtime_path` content resolved on the target machine at switch time
-
-Layers also define `from` and `to` mappings, so multiple sources can contribute different subtrees to the same target file.
+- `runtime_path` content resolved on the target machine at activation time
 
 Ownership determines how undeclared fields behave:
 
@@ -57,7 +70,9 @@ Ownership determines how undeclared fields behave:
 
 ## Runtime model
 
-The runtime works in semantic phases:
+The runtime consumes a schema v5 task file with absolute targets and no explicit document or layer ids.
+
+It works in semantic phases:
 
 1. assemble all layers into a single `current_desired` object
 2. load the current local file and the previous state snapshot
@@ -74,6 +89,19 @@ Important semantics:
 - fields are deleted only when they existed in `previous_desired` and were removed from `current_desired`
 - if a layer starts managing a field that already exists locally, identical values are accepted but differing values are conflicts
 - unchanged managed fields are not rewritten just because they are managed
+- runtime state paths are derived internally from the absolute target path
+
+## Edge cases and safety rules
+
+The current implementation intentionally handles several edge cases explicitly:
+
+- first apply with no state but an existing target uses takeover semantics and does not delete undeclared fields
+- a missing target with existing state is treated as a destructive local change and fails
+- ownership changes to `local` stop management of that subtree without deleting local content
+- `sealed` rejects undeclared fields even if they were already present before the current run
+- array edits preserve diff order through ordered `set` / `remove` / `insert` operations
+- declarative layer `from` / `to` paths still support only object keys; array indices are currently runtime-internal only
+- old task files and old state snapshots are ignored rather than migrated
 
 ## Activation model
 
@@ -81,16 +109,12 @@ The Home Manager module uses `home.activation` DAG entries for switch-time execu
 
 The activation block follows current Home Manager conventions for side-effecting hooks: it runs after `writeBoundary`, uses `run --silence` so `DRY_RUN` semantics stay intact, and emits optional diagnostics through `verboseEcho`.
 
-- Linux platform integration may later expose `systemd.user.services` when a persistent user unit is useful.
-- Darwin platform integration may later expose `launchd.agents` when a persistent user agent is useful.
-
-The switch-time reconcile path itself stays centered on `home.activation = lib.hm.dag.entryAfter [ "writeBoundary" ]`.
-
 ## Testing model
 
 - Runtime verification is split by phase: task schema, assembly, diff, merge, format implementations, and end-to-end reconcile.
 - Home Manager verification stays in the lightweight eval lane: direct evaluation of generated task payloads and activation blocks, not VM tests.
 - YAML verification uses `ruamel.yaml` round-trip editing behavior, and TOML verification uses `tomlkit` round-trip editing behavior.
+- Full aggregate checks are exposed through flake outputs and `nix run .#tests`.
 
 Convenience flake test outputs are exposed as:
 

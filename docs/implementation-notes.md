@@ -42,11 +42,13 @@ It stores:
 
 This is enough to derive managed history when needed and keeps the merge logic centered on semantic documents instead of special-case path bookkeeping.
 
+The state path itself is derived internally from the absolute target path, so no externally supplied document id is required.
+
 ## New reconcile model
 
 The runtime pipeline is now:
 
-1. `decode`: load and validate the v4 task file
+1. `decode`: load and validate the v5 task file
 2. `assemble`: load layers and build `current_desired`
 3. `load`: read `current_local` and prior state snapshot
 4. `diff`: compute `local_diff` and `desired_diff`
@@ -90,6 +92,17 @@ The previous `yq-go` adaptation was acceptable for object conversion but was not
 ### TOML
 
 TOML continues to use `tomlkit`, but under a dedicated implementation instead of implicit patch helpers inside the semantic core.
+
+## Edge cases handled deliberately
+
+The current implementation explicitly handles these cases:
+
+- first apply with existing local files uses takeover semantics rather than blind overwrite
+- deleting a previously managed path conflicts if the local file changed it since the last successful apply
+- switching a subtree to `local` stops management without deleting local content
+- `sealed` rejects undeclared fields even when they were already present before this run
+- array edit ordering is preserved through ordered operations
+- declarative `from` / `to` paths are still object-key-only even though runtime edit operations support array indices internally
 
 ## Simplifications taken deliberately
 

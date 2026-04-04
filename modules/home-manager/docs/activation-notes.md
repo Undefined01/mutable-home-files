@@ -5,7 +5,7 @@
 Use Home Manager activation DAG entries after `writeBoundary` for any side-effecting action:
 
 ```nix
-home.activation.mutableFiles = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+home.activation.mutableFile = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
   verboseEcho "Reconciling mutable files"
   run --silence ${lib.getExe runtime} --task-file ${taskFile}
 '';
@@ -16,6 +16,8 @@ This keeps the hook compatible with Home Manager's activation-driver expectation
 - `writeBoundary` marks the point after which writes are allowed
 - `run` makes `DRY_RUN` behavior consistent with the rest of the activation script
 - `verboseEcho` makes the block visible when `VERBOSE=1` without adding unconditional output
+
+The mutable-file module intentionally does not copy `home.file` generation-link semantics. It performs in-place reconciliation against existing files, so activation is only responsible for invoking the runtime at the correct point in the Home Manager DAG.
 
 ## Linux integration
 

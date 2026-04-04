@@ -8,10 +8,11 @@ The Home Manager side is pure Nix.
 
 Responsibilities:
 
-- define `home.mutableFiles`
+- define `home.mutableFile`
 - define `home.mutableFileRuntime.package`
 - validate target, ownership, and layer options
 - normalize file definitions into runtime task files
+- normalize top-level `value` and `source` into default layers
 - register switch-time activation hooks via `home.activation`
 - optionally attach Linux and Darwin specific persistent integration points later, without replacing activation
 - invoke the packaged runtime binary exported by the flake or explicitly injected by callers
@@ -23,7 +24,7 @@ The runtime is a Python CLI with a semantic core and format-specific implementat
 Responsibilities:
 
 - decode task files emitted by the Home Manager module
-- load ordered layers from declarative values, store paths, and runtime paths
+- load ordered layers from inline values, store paths, and runtime paths
 - assemble layers into one desired object while rejecting ambiguous overlap
 - load current local documents and previous state snapshots
 - compute local diffs and desired diffs independently
@@ -43,6 +44,24 @@ The system is designed around these constraints:
 - deletion must only target paths removed from previous desired state
 - unchanged fields should not be rewritten just because they are managed
 - YAML and TOML comments and key order should survive outside the edited write set whenever possible
+- state identity should derive from the normalized absolute target, not from external ids
+
+## Why the current split exists
+
+The implementation is intentionally split because a single monolithic reconcile function cannot answer all of the required questions safely.
+
+The runtime needs to distinguish:
+
+- what changed locally since the last successful apply
+- what changed declaratively since the last successful apply
+- what paths are actually allowed to be touched in the current run
+
+That is why the architecture is centered on:
+
+- separate layer assembly
+- separate local and desired diffs
+- ownership-aware merge planning
+- format-specific round-trip editing behind explicit interfaces
 
 ## Semantic model
 
@@ -72,7 +91,7 @@ The runtime applies one recursive ownership mode at each path.
 - `sealed`: only layer-declared fields are managed; undeclared fields are conflicts
 - `local`: the subtree is entirely local and runtime-transparent
 
-The effective mode is resolved by longest matching override, falling back to the file's `fallback` mode.
+The effective mode is resolved by longest matching rule, falling back to the file's `default` mode.
 
 ## Layer assembly model
 
@@ -130,6 +149,7 @@ That snapshot records:
 - the full desired semantic document used for that apply
 - the ownership policy used for that apply
 
+The snapshot path is derived internally from the absolute target path.
 Old or incompatible state is discarded instead of migrated.
 
 ## Packaging model
@@ -145,6 +165,7 @@ Old or incompatible state is discarded instead of migrated.
 - Runtime tests are organized by semantic phase: schema, assembly, diff, merge, format implementations, and end-to-end reconcile.
 - Home Manager module tests remain lightweight evaluation tests that assert on generated payloads and activation hooks.
 - Verification must cover both semantic correctness and round-trip preservation for YAML/TOML comments and ordering.
+- Aggregate verification is exposed through `nix run .#tests` so package tests and Home Manager eval tests stay in one place.
 
 ## Home Manager integration notes
 
@@ -153,7 +174,7 @@ Old or incompatible state is discarded instead of migrated.
 The primary switch-time integration point remains:
 
 ```nix
-home.activation.mutableFiles = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+home.activation.mutableFile = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
   verboseEcho "Reconciling mutable files"
   run --silence ${lib.getExe runtime} --task-file ${taskFile}
 '';

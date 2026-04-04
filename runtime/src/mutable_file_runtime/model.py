@@ -13,23 +13,23 @@ OwnershipMode: TypeAlias = str
 
 
 @dataclass(frozen=True)
-class OwnershipOverride:
+class OwnershipRule:
     path: PathType
     mode: OwnershipMode
 
 
 @dataclass(frozen=True)
 class Ownership:
-    fallback: OwnershipMode
-    overrides: tuple[OwnershipOverride, ...] = ()
+    default: OwnershipMode
+    rules: tuple[OwnershipRule, ...] = ()
 
     def mode_for(self, path: PathType) -> OwnershipMode:
-        mode = self.fallback
+        mode = self.default
         best_length = -1
-        for override in self.overrides:
-            if path[: len(override.path)] == override.path and len(override.path) > best_length:
-                mode = override.mode
-                best_length = len(override.path)
+        for rule in self.rules:
+            if path[: len(rule.path)] == rule.path and len(rule.path) > best_length:
+                mode = rule.mode
+                best_length = len(rule.path)
         return mode
 
 
@@ -42,7 +42,6 @@ class LayerSource:
 
 @dataclass(frozen=True)
 class Layer:
-    id: str
     name: str
     source: LayerSource
     from_path: tuple[str, ...]
@@ -52,7 +51,6 @@ class Layer:
 
 @dataclass(frozen=True)
 class DocumentSpec:
-    id: str
     target: str
     format: str
     create: bool
@@ -104,7 +102,7 @@ class MergeResult:
 @dataclass(frozen=True)
 class StateSnapshot:
     version: int
-    document_id: str
+    target: str
     format: str
     ownership: Ownership
     previous_applied: DocumentValue

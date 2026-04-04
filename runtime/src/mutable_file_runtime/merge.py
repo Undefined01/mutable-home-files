@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from .diff import diff_documents
-from .model import Conflict, MISSING, MergeResult, PathType, clone, is_mapping, ordered_keys, values_equal
+from .model import Conflict, MISSING, MergeResult, PathType, clone, ordered_keys, values_equal
 
 
 

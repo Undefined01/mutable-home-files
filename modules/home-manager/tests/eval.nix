@@ -22,6 +22,7 @@ let
         {
           home.homeDirectory = "/home/tester";
           home.stateVersion = "24.11";
+          home.username = "tester";
           home.mutableFileRuntime.package = runtime;
         }
       ] ++ extraModules;
@@ -35,32 +36,29 @@ let
         {
           home.homeDirectory = "/home/tester";
           home.stateVersion = "24.11";
+          home.username = "tester";
         }
       ] ++ extraModules;
     };
 
-  expectEvalFailure = name: modules:
+  expectEvalFailure = modules:
     let
       result = builtins.tryEval (evalConfig modules);
     in
-    lib.nameValuePair name {
+    {
       expr = result.success;
       expected = false;
     };
-
-  expectedDocumentId = target: builtins.hashString "sha256" target;
-  expectedLayerId = index: name: from: to:
-    builtins.hashString "sha256" "${toString index}:${name}:${builtins.toJSON from}:${builtins.toJSON to}";
 in
 lib.runTests {
-  no_entries_do_not_emit_payload_or_activation = {
+  test_no_entries_do_not_emit_payload_or_activation = {
     expr =
       let
         cfg = (evalConfig [ ]).config;
       in
       {
-        payload = cfg.home.mutableFilesInternal.taskPayload;
-        hasActivation = builtins.hasAttr "mutableFiles" cfg.home.activation;
+        payload = cfg.home.mutableFileInternal.taskPayload;
+        hasActivation = builtins.hasAttr "mutableFile" cfg.home.activation;
       };
     expected = {
       payload = { };
@@ -68,11 +66,11 @@ lib.runTests {
     };
   };
 
-  payload_single_layer_defaults = {
+  test_payload_top_level_value_shortcut_defaults = {
     expr =
       (evalConfig [
         {
-          home.mutableFiles.".config/demo/config.toml" = {
+          home.mutableFile.".config/demo/config.toml" = {
             format = "toml";
             ownership = {
               default = "declared";
@@ -80,39 +78,31 @@ lib.runTests {
                 { path = [ "runtime" ]; mode = "local"; }
               ];
             };
-            layers = [
-              {
-                name = "defaults";
-                value = {
-                  app = { name = "demo"; };
-                  runtime = { enabled = false; };
-                };
-                to = [ ];
-              }
-            ];
+            value = {
+              app = { name = "demo"; };
+              runtime = { enabled = false; };
+            };
           };
         }
-      ]).config.home.mutableFilesInternal.taskPayload;
+      ]).config.home.mutableFileInternal.taskPayload;
     expected = {
-      version = 4;
+      version = 5;
       documents = [
         {
-          id = expectedDocumentId ".config/demo/config.toml";
-          target = ".config/demo/config.toml";
+          target = "/home/tester/.config/demo/config.toml";
           format = "toml";
           create = true;
           mode = "0600";
           state_dir = "/home/tester/.local/state/mutable-file";
           ownership = {
-            fallback = "declared";
-            overrides = [
+            default = "declared";
+            rules = [
               { path = [ "runtime" ]; mode = "local"; }
             ];
           };
           layers = [
             {
-              id = expectedLayerId 0 "defaults" [ ] [ ];
-              name = "defaults";
+              name = "default";
               source = {
                 kind = "inline";
                 value = {
@@ -130,12 +120,59 @@ lib.runTests {
     };
   };
 
-  payload_multiple_layers_and_custom_state_home = {
+  test_payload_top_level_value_shortcut_accepts_config_values = {
+    expr =
+      (evalConfig [
+        ({ config, ... }: {
+          programs.vscode.enable = true;
+          programs.vscode.profiles.default.userSettings = {
+            "editor.fontSize" = 14;
+            "files.autoSave" = "onFocusChange";
+          };
+
+          home.mutableFile.".config/Code/User/settings.json" = {
+            format = "json";
+            value = config.programs.vscode.profiles.default.userSettings;
+          };
+        })
+      ]).config.home.mutableFileInternal.taskPayload.documents;
+    expected = [
+      {
+        target = "/home/tester/.config/Code/User/settings.json";
+        format = "json";
+        create = true;
+        mode = "0600";
+        state_dir = "/home/tester/.local/state/mutable-file";
+        ownership = {
+          default = "declared";
+          rules = [ ];
+        };
+        layers = [
+          {
+            name = "default";
+            source = {
+              kind = "inline";
+              value = {
+                "editor.fontSize" = 14;
+                "files.autoSave" = "onFocusChange";
+              };
+            };
+            from = [ ];
+            to = [ ];
+            required = true;
+          }
+        ];
+      }
+    ];
+  };
+
+  test_payload_top_level_runtime_source_shortcut_and_absolute_target = {
     expr =
       (evalConfig [
         {
           xdg.stateHome = "/tmp/custom-state";
-          home.mutableFiles.".config/demo/config.yaml" = {
+          home.mutableFile.secret = {
+            target = "/etc/demo/config.yaml";
             format = "yaml";
             create = false;
             mode = "0640";
@@ -145,110 +182,178 @@ lib.runTests {
                 { path = [ "credentials" ]; mode = "sealed"; }
               ];
             };
-            layers = [
-              {
-                name = "defaults";
-                source = repoRoot + "/README.md";
-                from = [ ];
-                to = [ "docs" ];
-              }
-              {
-                name = "runtime-secret";
-                path = "/run/secrets/runtime.json";
-                from = [ "profiles" "default" ];
-                to = [ "profiles" "default" ];
-                required = false;
-              }
-            ];
+            source = "/run/secrets/runtime.json";
           };
         }
-      ]).config.home.mutableFilesInternal.taskPayload.documents;
+      ]).config.home.mutableFileInternal.taskPayload.documents;
     expected = [
       {
-        id = expectedDocumentId ".config/demo/config.yaml";
-        target = ".config/demo/config.yaml";
+        target = "/etc/demo/config.yaml";
         format = "yaml";
         create = false;
         mode = "0640";
         state_dir = "/tmp/custom-state/mutable-file";
         ownership = {
-          fallback = "declared";
-          overrides = [
+          default = "declared";
+          rules = [
             { path = [ "credentials" ]; mode = "sealed"; }
           ];
         };
         layers = [
           {
-            id = expectedLayerId 0 "defaults" [ ] [ "docs" ];
-            name = "defaults";
-            source = {
-              kind = "store_path";
-              path = toString (repoRoot + "/README.md");
-            };
-            from = [ ];
-            to = [ "docs" ];
-            required = true;
-          }
-          {
-            id = expectedLayerId 1 "runtime-secret" [ "profiles" "default" ] [ "profiles" "default" ];
-            name = "runtime-secret";
+            name = "default";
             source = {
               kind = "runtime_path";
               path = "/run/secrets/runtime.json";
             };
-            from = [ "profiles" "default" ];
-            to = [ "profiles" "default" ];
-            required = false;
+            from = [ ];
+            to = [ ];
+            required = true;
           }
         ];
       }
     ];
   };
 
-  payload_multiple_entries_sorted_by_attr_name = {
+  test_payload_top_level_store_source_shortcut = {
     expr =
       (evalConfig [
         {
-          home.mutableFiles = {
+          home.mutableFile.".config/demo/from-store.yaml" = {
+            format = "yaml";
+            source = repoRoot + "/README.md";
+          };
+        }
+      ]).config.home.mutableFileInternal.taskPayload.documents;
+    expected = [
+      {
+        target = "/home/tester/.config/demo/from-store.yaml";
+        format = "yaml";
+        create = true;
+        mode = "0600";
+        state_dir = "/home/tester/.local/state/mutable-file";
+        ownership = {
+          default = "declared";
+          rules = [ ];
+        };
+        layers = [
+          {
+            name = "default";
+            source = {
+              kind = "store_path";
+              path = toString (repoRoot + "/README.md");
+            };
+            from = [ ];
+            to = [ ];
+            required = true;
+          }
+        ];
+      }
+    ];
+  };
+
+  test_payload_explicit_layers_normalize_sources_and_names = {
+    expr =
+      (evalConfig [
+        {
+          home.mutableFile.".config/demo/layers.json" = {
+            format = "json";
+            layers = [
+              {
+                value = { defaults = true; };
+              }
+              {
+                name = "secret";
+                source = "/run/secrets/app.json";
+                from = [ "auth" ];
+                to = [ "credentials" ];
+                required = false;
+              }
+              {
+                source = repoRoot + "/docs/interfaces.md";
+                to = [ "docs" ];
+              }
+            ];
+          };
+        }
+      ]).config.home.mutableFileInternal.taskPayload.documents;
+    expected = [
+      {
+        target = "/home/tester/.config/demo/layers.json";
+        format = "json";
+        create = true;
+        mode = "0600";
+        state_dir = "/home/tester/.local/state/mutable-file";
+        ownership = {
+          default = "declared";
+          rules = [ ];
+        };
+        layers = [
+          {
+            name = "layer0";
+            source = {
+              kind = "inline";
+              value = { defaults = true; };
+            };
+            from = [ ];
+            to = [ ];
+            required = true;
+          }
+          {
+            name = "secret";
+            source = {
+              kind = "runtime_path";
+              path = "/run/secrets/app.json";
+            };
+            from = [ "auth" ];
+            to = [ "credentials" ];
+            required = false;
+          }
+          {
+            name = "layer2";
+            source = {
+              kind = "store_path";
+              path = toString (repoRoot + "/docs/interfaces.md");
+            };
+            from = [ ];
+            to = [ "docs" ];
+            required = true;
+          }
+        ];
+      }
+    ];
+  };
+
+  test_payload_multiple_entries_sorted_by_attr_name = {
+    expr =
+      (evalConfig [
+        {
+          home.mutableFile = {
             ".config/z-last.toml" = {
               format = "toml";
-              layers = [
-                {
-                  name = "z";
-                  value = { z = 1; };
-                  to = [ ];
-                }
-              ];
+              value = { z = 1; };
             };
             ".config/a-first.toml" = {
               format = "toml";
-              layers = [
-                {
-                  name = "a";
-                  value = { a = 1; };
-                  to = [ ];
-                }
-              ];
+              value = { a = 1; };
             };
           };
         }
-      ]).config.home.mutableFilesInternal.taskPayload.documents;
+      ]).config.home.mutableFileInternal.taskPayload.documents;
     expected = [
       {
-        id = expectedDocumentId ".config/a-first.toml";
-        target = ".config/a-first.toml";
+        target = "/home/tester/.config/a-first.toml";
         format = "toml";
         create = true;
         mode = "0600";
         state_dir = "/home/tester/.local/state/mutable-file";
         ownership = {
-          fallback = "declared";
-          overrides = [ ];
+          default = "declared";
+          rules = [ ];
         };
         layers = [
           {
-            id = expectedLayerId 0 "a" [ ] [ ];
-            name = "a";
+            name = "default";
             source = {
               kind = "inline";
               value = { a = 1; };
@@ -260,20 +365,18 @@ lib.runTests {
         ];
       }
       {
-        id = expectedDocumentId ".config/z-last.toml";
-        target = ".config/z-last.toml";
+        target = "/home/tester/.config/z-last.toml";
         format = "toml";
         create = true;
         mode = "0600";
         state_dir = "/home/tester/.local/state/mutable-file";
         ownership = {
-          fallback = "declared";
-          overrides = [ ];
+          default = "declared";
+          rules = [ ];
         };
         layers = [
           {
-            id = expectedLayerId 0 "z" [ ] [ ];
-            name = "z";
+            name = "default";
             source = {
               kind = "inline";
               value = { z = 1; };
@@ -287,20 +390,58 @@ lib.runTests {
     ];
   };
 
-  flake_module_injects_runtime_package = {
+  test_disabled_entries_do_not_emit_documents = {
+    expr =
+      (evalConfig [
+        {
+          home.mutableFile = {
+            ".config/demo/enabled.toml" = {
+              format = "toml";
+              value = { enabled = true; };
+            };
+            ".config/demo/disabled.toml" = {
+              enable = false;
+              format = "toml";
+              value = { enabled = false; };
+            };
+          };
+        }
+      ]).config.home.mutableFileInternal.taskPayload.documents;
+    expected = [
+      {
+        target = "/home/tester/.config/demo/enabled.toml";
+        format = "toml";
+        create = true;
+        mode = "0600";
+        state_dir = "/home/tester/.local/state/mutable-file";
+        ownership = {
+          default = "declared";
+          rules = [ ];
+        };
+        layers = [
+          {
+            name = "default";
+            source = {
+              kind = "inline";
+              value = { enabled = true; };
+            };
+            from = [ ];
+            to = [ ];
+            required = true;
+          }
+        ];
+      }
+    ];
+  };
+
+  test_flake_module_injects_runtime_package = {
     expr =
       let
         cfg = (evalFlakeModuleConfig [
           {
-            home.mutableFiles.".config/demo/config.toml" = {
+            home.mutableFile.".config/demo/config.toml" = {
               format = "toml";
-              layers = [
-                {
-                  name = "defaults";
-                  value = { app = { name = "demo"; }; };
-                  to = [ ];
-                }
-              ];
+              value = { app = { name = "demo"; }; };
             };
           }
         ]).config;
@@ -309,24 +450,18 @@ lib.runTests {
     expected = runtime.name;
   };
 
-  activation_uses_run_wrapper_and_logs = {
+  test_activation_uses_run_wrapper_and_logs = {
     expr =
       let
         cfg = (evalConfig [
           {
-            home.mutableFiles.".config/demo/config.toml" = {
+            home.mutableFile.".config/demo/config.toml" = {
               format = "toml";
-              layers = [
-                {
-                  name = "defaults";
-                  value = { app = { name = "demo"; }; };
-                  to = [ ];
-                }
-              ];
+              value = { app = { name = "demo"; }; };
             };
           }
         ]).config;
-        text = cfg.home.activation.mutableFiles.data;
+        text = cfg.home.activation.mutableFile.data;
       in
       {
         hasRunWrapper = builtins.match ".*run --silence '?.*mutable-file-runtime'? --task-file '?.*mutable-file-runtime-tasks.json'?.*" text != null;
@@ -338,85 +473,129 @@ lib.runTests {
     };
   };
 
-  activation_runs_after_write_boundary = {
+  test_activation_runs_after_write_boundary = {
     expr =
       let
         cfg = (evalConfig [
           {
-            home.mutableFiles.".config/demo/config.toml" = {
+            home.mutableFile.".config/demo/config.toml" = {
               format = "toml";
-              layers = [
-                {
-                  name = "defaults";
-                  value = { app = { name = "demo"; }; };
-                  to = [ ];
-                }
-              ];
+              value = { app = { name = "demo"; }; };
             };
           }
         ]).config;
       in
-      cfg.home.activation.mutableFiles.after;
+      cfg.home.activation.mutableFile.after;
     expected = [ "writeBoundary" ];
   };
 
-  invalid_relative_target_fails = expectEvalFailure "invalid_relative_target_fails" [
+  test_duplicate_normalized_targets_fail = expectEvalFailure [
     {
-      home.mutableFiles."/absolute/config.toml" = {
+      home.mutableFile = {
+        one = {
+          target = "/etc/demo/config.toml";
+          format = "toml";
+          value = { a = 1; };
+        };
+        two = {
+          target = "/etc/demo/config.toml";
+          format = "toml";
+          value = { b = 2; };
+        };
+      };
+    }
+  ];
+
+  test_invalid_value_and_source_entry_forms_fail = expectEvalFailure [
+    {
+      home.mutableFile.".config/demo/config.toml" = {
+        format = "toml";
+        value = { app = { name = "demo"; }; };
+        source = "/run/secrets/demo.toml";
+      };
+    }
+  ];
+
+  test_invalid_value_and_layers_entry_forms_fail = expectEvalFailure [
+    {
+      home.mutableFile.".config/demo/config.toml" = {
+        format = "toml";
+        value = { app = { name = "demo"; }; };
+        layers = [ { value = { a = 1; }; } ];
+      };
+    }
+  ];
+
+  test_invalid_source_and_layers_entry_forms_fail = expectEvalFailure [
+    {
+      home.mutableFile.".config/demo/config.toml" = {
+        format = "toml";
+        source = "/run/secrets/demo.toml";
+        layers = [ { value = { a = 1; }; } ];
+      };
+    }
+  ];
+
+  test_invalid_relative_runtime_source_fails = expectEvalFailure [
+    {
+      home.mutableFile.".config/demo/config.toml" = {
+        format = "toml";
+        source = "relative.toml";
+      };
+    }
+  ];
+
+  test_missing_value_source_layers_fail = expectEvalFailure [
+    {
+      home.mutableFile.".config/demo/config.toml" = {
+        format = "toml";
+      };
+    }
+  ];
+
+  test_layer_with_both_value_and_source_fails = expectEvalFailure [
+    {
+      home.mutableFile.".config/demo/config.toml" = {
         format = "toml";
         layers = [
           {
-            name = "defaults";
-            value = { app = { name = "demo"; }; };
-            to = [ ];
+            value = { a = 1; };
+            source = "/run/secrets/demo.toml";
           }
         ];
       };
     }
   ];
 
-  invalid_multiple_sources_fail = expectEvalFailure "invalid_multiple_sources_fail" [
+  test_layer_with_neither_value_nor_source_fails = expectEvalFailure [
     {
-      home.mutableFiles.".config/demo/config.toml" = {
+      home.mutableFile.".config/demo/config.toml" = {
         format = "toml";
         layers = [
           {
-            name = "broken";
-            value = { app = { name = "demo"; }; };
-            path = "/run/secrets/config.toml";
-            to = [ ];
+            to = [ "app" ];
           }
         ];
       };
     }
   ];
 
-  invalid_relative_runtime_path_fails = expectEvalFailure "invalid_relative_runtime_path_fails" [
+  test_relative_runtime_layer_source_fails = expectEvalFailure [
     {
-      home.mutableFiles.".config/demo/config.toml" = {
+      home.mutableFile.".config/demo/config.toml" = {
         format = "toml";
         layers = [
           {
-            name = "secret";
-            path = "relative.toml";
-            to = [ ];
+            source = "relative.toml";
           }
         ];
       };
     }
   ];
 
-  missing_layers_fail = expectEvalFailure "missing_layers_fail" [
+  test_local_ownership_rejects_layer_target = expectEvalFailure [
     {
-      home.mutableFiles.".config/demo/config.toml" = {
-        format = "toml";
-      };
-    }
-  ];
-
-  local_ownership_rejects_layer_target = expectEvalFailure "local_ownership_rejects_layer_target" [
-    {
-      home.mutableFiles.".config/demo/config.toml" = {
+      home.mutableFile.".config/demo/config.toml" = {
         format = "toml";
         ownership = {
           rules = [
@@ -427,7 +606,7 @@ lib.runTests {
           {
             name = "defaults";
             value = { enabled = true; };
-            to = [ "runtime" ];
+            to = [ "runtime" "cache" ];
           }
         ];
       };

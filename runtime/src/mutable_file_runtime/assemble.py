@@ -3,8 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .formats import get_format
-from .model import MISSING, clone, is_mapping, lookup_path
-
+from .model import MISSING, clone
 
 
 def _lookup_mapping_path(document, path):
@@ -16,7 +15,6 @@ def _lookup_mapping_path(document, path):
     return node
 
 
-
 def _ensure_object_path(document, path):
     cursor = document
     for segment in path[:-1]:
@@ -24,7 +22,6 @@ def _ensure_object_path(document, path):
             cursor[segment] = {}
         cursor = cursor[segment]
     return cursor
-
 
 
 def _set_object_path(document, path, value):
@@ -36,7 +33,6 @@ def _set_object_path(document, path, value):
         return
     cursor = _ensure_object_path(document, path)
     cursor[path[-1]] = clone(value)
-
 
 
 def _merge_layer_value(target, path, incoming, layer_name):
@@ -51,7 +47,6 @@ def _merge_layer_value(target, path, incoming, layer_name):
     raise RuntimeError(f"incompatible layer overlap at {path}: {layer_name}")
 
 
-
 def _load_layer_source(document, layer):
     if layer.source.kind == "inline":
         return clone(layer.source.value)
@@ -62,7 +57,6 @@ def _load_layer_source(document, layer):
         return MISSING
     adapter = get_format(document.format)
     return adapter.load_file(source_path)
-
 
 
 def assemble_document(document):

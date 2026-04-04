@@ -6,11 +6,13 @@
 
 Implemented:
 
-- `home.mutableFiles` option surface for layered mutable-file definitions
+- `home.mutableFile` option surface for layered mutable-file definitions
 - `home.mutableFileRuntime.package` for explicit runtime package injection
-- option validation for layered `value`/`source`/`path` exclusivity
-- aggregated JSON task-file generation for schema version `4`
-- v4 payload shape with `documents`, nested `source`, `state_dir`, and ownership `fallback` / `overrides`
+- top-level `value` and `source` shortcuts that normalize to a single default layer
+- option validation for file-level `value` / `source` / `layers` exclusivity
+- normalized absolute target generation with target defaulting to the attribute name
+- aggregated JSON task-file generation for schema version `5`
+- task payload shape with `documents`, nested `source`, absolute `target`, and ownership `default` / `rules`
 - ordered `layers` support with `from` -> `to` mappings
 - switch-time activation hook through `home.activation = lib.hm.dag.entryAfter [ "writeBoundary" ]`
 - activation block aligned with current Home Manager conventions through `verboseEcho` and `run --silence`
@@ -27,11 +29,13 @@ Not implemented yet:
 
 Implemented:
 
-- task-file loading for schema version `4`
+- task-file loading for schema version `5`
 - interface-oriented runtime split across schema, assembly, diff, merge, state, reconcile, and format implementations
 - ordered layer loading from `inline`, `store_path`, and `runtime_path` sources
 - overlap-validated layer assembly before any local comparison
+- absolute-target reconciliation without `--home-directory`
 - state snapshots with `previous_applied` and `previous_desired`
+- runtime state keys derived internally from the absolute target path
 - ownership-aware merge planning with `declared`, `sealed`, and `local`
 - takeover detection for newly managed fields
 - deletions driven only by paths removed from previous desired state
@@ -52,7 +56,7 @@ Not implemented yet:
 
 Environment note:
 
-- the dev shell and packaged runtime now provide `ruamel.yaml` and `tomlkit`
+- the dev shell and packaged runtime provide `ruamel.yaml` and `tomlkit`
 - old runtime state snapshots are ignored rather than migrated
 
 ## Verification targets
