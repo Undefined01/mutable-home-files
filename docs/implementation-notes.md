@@ -1,157 +1,101 @@
 # Implementation Notes
 
-## Why the next change exists
+## Why the current rewrite exists
 
-The previous `layers + preserve` model was too coarse.
+The previous runtime model still had two structural limitations even after the ownership redesign:
 
-Problems with the old design:
+- it compared `current_local` directly against `current_desired`
+- it let the same function own task-file decoding, semantic comparison, and text patching
 
-- layer overlap was silently resolved by write order
-- undeclared local fields were treated as managed unless they were manually listed in `preserve`
-- there was no way to distinguish "ignore unknown fields" from "reject unknown fields"
-- managed takeover of previously local fields was not explicit
-- deletion semantics were too tied to whole-file replacement instead of managed ownership
+That model cannot cleanly answer the new questions:
 
-The next iteration fixes those concerns by separating three responsibilities:
+- which fields changed locally since the last successful apply?
+- which fields changed in layers since the last successful apply?
+- which fields should be touched in this run, and which should be left byte-for-byte alone?
 
-1. layer merge builds a single desired object and rejects ambiguous overlap
-2. ownership decides how undeclared fields behave recursively
-3. state tracks previously managed fields so deletion and takeover semantics are explicit
+## New runtime boundary
 
-## Home Manager module / Runtime boundary
+The Home Manager module still does only two things:
 
-Current boundary remains intentionally narrow:
+- validate declarative inputs
+- emit an aggregated JSON task file and invoke the runtime
 
-- the Home Manager module emits a single aggregated JSON task file
-- the Home Manager module invokes one runtime executable at switch time
-- the runtime owns all source loading, layer merge validation, ownership-aware comparison, and target writes
+The runtime now owns all of the following:
 
-The module does not parse target files and does not shell out to `yq` directly.
+- task-file decoding
+- state loading
+- layer loading and assembly
+- semantic diff generation
+- ownership-aware conflict detection
+- ordered write planning
+- format-specific round-trip editing
 
-## Home Manager module implementation model
+## New state model
 
-- Module entry point: `modules/home-manager/mutable-file/default.nix`
-- Switch-time execution path: `home.activation.mutableFiles = lib.hm.dag.entryAfter [ "writeBoundary" ] ...`
-- Runtime selection option: `home.mutableFileRuntime.package`
-- Flake default module wiring: `flake.nix` injects `self.packages.<system>.mutable-file-runtime`
+The state file is now a semantic snapshot, not a managed-path manifest.
 
-The activation block stays in the current Home Manager style:
+It stores:
 
-- it runs after `writeBoundary`
-- it uses `verboseEcho` for optional logging
-- it uses `run --silence ...` so `DRY_RUN` and activation-driver behavior remain consistent
+- `previous_applied`
+- `previous_desired`
+- `ownership`
 
-Supported consumption paths remain:
+This is enough to derive managed history when needed and keeps the merge logic centered on semantic documents instead of special-case path bookkeeping.
 
-1. import the flake's `homeManagerModules.default`
-2. import the raw module and override `home.mutableFileRuntime.package`
+## New reconcile model
 
-## Runtime implementation model
+The runtime pipeline is now:
 
-- Runtime entry point: `runtime/src/mutable_file_runtime/main.py`
-- Core reconcile logic: `runtime/src/mutable_file_runtime/core.py`
-- State layout: `${state_root}/${entry_id}/state.json`
+1. `decode`: load and validate the v4 task file
+2. `assemble`: load layers and build `current_desired`
+3. `load`: read `current_local` and prior state snapshot
+4. `diff`: compute `local_diff` and `desired_diff`
+5. `merge`: reject ownership conflicts and plan write operations from `desired_diff`
+6. `edit`: apply ordered operations through a format implementation
+7. `verify`: reload rendered text and compare to expected semantic output
+8. `persist`: atomically write target and store the new snapshot
 
-The runtime should now be thought of as three stages:
+## Why write planning uses desired diff only
 
-1. `assemble`: load layers and merge them into one desired tree with overlap validation
-2. `compare`: evaluate the current file against the desired tree plus ownership rules
-3. `apply`: write managed changes while preserving unmanaged comments where adapters permit
+The runtime should not rewrite managed fields simply because they are managed. It should rewrite fields only when the declarative input changed in this run.
 
-## Layer merge model
+That means:
 
-Each runtime entry is assembled from ordered layers, but order is only relevant for visiting sources. It no longer decides how conflicts resolve.
+- local edits to managed fields become conflicts instead of silent overwrite
+- unchanged managed fields remain untouched on disk
+- deletions only happen when the desired state actually removed a path relative to `previous_desired`
 
-For each layer, the runtime:
+## Operation design
 
-- loads the layer source according to `source_kind`
-- extracts the subtree at `from_path`
-- merges that subtree into the desired document at `to_path`
-- records the layer as the owner for newly declared paths
+The runtime uses three ordered operation kinds:
 
-Overlap rules:
+- `set`
+- `remove`
+- `insert`
 
-- object/object overlap is recursively merged
-- any overlap involving scalar or array values is rejected
-- identical scalar or array writes from multiple layers are still rejected because ownership is ambiguous
+`insert` is required because arrays need positional edits. Using only `set` and `remove` would force whole-array replacement for many common edits and would destroy unrelated ordering and comments around the array.
 
-## Ownership model
+## Format implementation notes
 
-Ownership replaces `preserve`.
+### JSON
 
-Modes:
+JSON does not need round-trip comment preservation, but it still needs stable field order.
+The JSON implementation therefore preserves existing object key order and applies insertions at deliberate positions when possible.
 
-- `declared`: undeclared fields are ignored and may evolve locally
-- `sealed`: undeclared fields are conflicts
-- `local`: the subtree is entirely local and may not be targeted by layers
+### YAML
 
-Ownership is recursive. The effective mode for a path is the most specific matching rule, otherwise `default_mode`.
+YAML now switches to `ruamel.yaml` round-trip mode.
+The previous `yq-go` adaptation was acceptable for object conversion but was not a good long-term fit for comment-preserving in-place editing.
 
-This lets the schema express three distinct concerns cleanly:
+### TOML
 
-- what layers declare
-- where local application state may exist
-- where undeclared fields are considered invalid
+TOML continues to use `tomlkit`, but under a dedicated implementation instead of implicit patch helpers inside the semantic core.
 
-## Managed takeover model
+## Simplifications taken deliberately
 
-When a field moves from locally-owned to layer-managed, the runtime compares the current local value to the newly declared desired value.
+- no backward compatibility with previous task-file versions
+- no migration of old state snapshots
+- no array addressing in layer `from` / `to` paths yet
+- no history graph storage in this iteration
 
-- equal values mean takeover without conflict
-- differing values mean conflict
-
-This keeps switch-time behavior safe for secret rollout and for gradual migration of previously mutable config into declarative management.
-
-## Deletion model
-
-Deletion is driven only by managed ownership.
-
-The runtime deletes paths when:
-
-- they were previously managed and are no longer declared
-- they were previously managed and a managed ancestor changed shape so that the old descendants disappeared
-
-The runtime does not delete fields that were never declared by layers.
-
-## State model
-
-The old baseline-only model is insufficient for the new semantics. The runtime now needs one state file per entry that records at least:
-
-- the previous managed desired tree
-- the previous managed path set or manifest
-- the ownership configuration used for the last successful apply
-
-This state is needed to distinguish:
-
-- new takeover from ordinary managed updates
-- managed deletion from never-managed unknown fields
-- ownership-policy changes from user edits
-
-## Format adapter status
-
-- JSON: pure Python stdlib
-- YAML: adapted via packaged `yq-go` (`mikefarah/yq`)
-- TOML: adapted directly in Python with `tomlkit`
-
-For YAML, the runtime converts target and source content through `yq-go` (`mikefarah/yq`) at the edges and then reuses the in-memory object comparison pipeline.
-
-For YAML updates against existing files, the runtime applies managed-path mutations on a temporary working copy and only then atomically replaces the live target.
-
-For TOML, the runtime parses the current document with `tomlkit`, uses `.unwrap()` for canonical comparison, and applies managed-path mutations back onto the original TOML document so unmanaged comments and layout survive.
-
-## Minimum viable iteration
-
-The minimum viable semantics for this round are:
-
-- ownership rules with `declared`, `sealed`, and `local`
-- layer overlap validation for object/scalar/array incompatibility
-- managed takeover detection
-- deletion only for previously managed fields
-- state tracking in a single `state.json`
-
-Deferred:
-
-- array-addressing paths
-- richer merge strategies for arrays
-- history/commit graph storage
-- ownership-aware partial patch minimization beyond current adapter behavior
+These keep the rewrite focused on a clean semantic core and explicit format interfaces.

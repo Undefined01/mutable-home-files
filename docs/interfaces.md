@@ -2,24 +2,24 @@
 
 ## Home Manager module -> Runtime task file
 
-The Home Manager module emits one aggregated task file in JSON.
+The Home Manager module emits one aggregated JSON task file.
 
-Current target shape for the next iteration:
+Current schema:
 
 ```json
 {
-  "version": 3,
-  "entries": [
+  "version": 4,
+  "documents": [
     {
-      "entry_id": "<sha256(target)>",
+      "id": "<sha256(target)>",
       "target": ".config/example/config.toml",
       "format": "toml",
       "create": true,
       "mode": "0600",
-      "state_root": "/home/user/.local/state/mutable-file",
+      "state_dir": "/home/user/.local/state/mutable-file",
       "ownership": {
-        "default_mode": "declared",
-        "rules": [
+        "fallback": "declared",
+        "overrides": [
           {
             "path": ["runtimeState"],
             "mode": "local"
@@ -32,25 +32,29 @@ Current target shape for the next iteration:
       },
       "layers": [
         {
-          "layer_id": "<sha256(layer)>",
+          "id": "<sha256(layer)>",
           "name": "defaults",
-          "source_kind": "value",
-          "source_payload": {
-            "app": {
-              "name": "demo"
+          "source": {
+            "kind": "inline",
+            "value": {
+              "app": {
+                "name": "demo"
+              }
             }
           },
-          "from_path": [],
-          "to_path": [],
+          "from": [],
+          "to": [],
           "required": true
         },
         {
-          "layer_id": "<sha256(layer)>",
+          "id": "<sha256(layer)>",
           "name": "db-secret",
-          "source_kind": "path",
-          "source_payload": "/run/secrets/db.toml",
-          "from_path": ["database"],
-          "to_path": ["credentials", "database"],
+          "source": {
+            "kind": "runtime_path",
+            "path": "/run/secrets/db.toml"
+          },
+          "from": ["database"],
+          "to": ["credentials", "database"],
           "required": true
         }
       ]
@@ -62,33 +66,33 @@ Current target shape for the next iteration:
 ## Field meanings
 
 - `version`: task-file schema version.
-- `entries`: reconciliation work items.
-- `entry_id`: stable identifier used for baseline state storage.
+- `documents`: reconciliation work items.
+- `id`: stable identifier used for state storage.
 - `target`: target file path relative to `home.homeDirectory`.
 - `format`: one of `toml`, `yaml`, or `json`.
 - `create`: whether missing target files may be created.
 - `mode`: mode to apply to newly written files.
-- `state_root`: directory used by runtime state storage.
-- `ownership`: recursive ownership policy for undeclared fields and local-only subtrees.
-- `ownership.default_mode`: fallback recursive policy applied when no more specific rule matches.
-- `ownership.rules`: path-specific ownership overrides.
-- `ownership.rules[].path`: path segment list receiving the rule.
-- `ownership.rules[].mode`: one of `declared`, `sealed`, or `local`.
+- `state_dir`: directory used by runtime state storage.
+- `ownership`: recursive ownership policy.
+- `ownership.fallback`: default recursive policy when no more specific override matches.
+- `ownership.overrides`: path-specific ownership overrides.
+- `ownership.overrides[].path`: path segment list receiving the override.
+- `ownership.overrides[].mode`: one of `declared`, `sealed`, or `local`.
 - `layers`: ordered source layers assembled into the desired document.
-- `layer_id`: stable identifier for a normalized layer.
-- `name`: human-readable layer name.
-- `source_kind`: one of `value`, `source`, or `path`.
-- `source_payload`: desired content or source locator.
-- `from_path`: path to copy from inside the layer source.
-- `to_path`: path to merge into inside the assembled desired document.
-- `required`: whether the runtime must fail if the layer file or `from_path` is missing.
+- `layers[].id`: stable identifier for a normalized layer.
+- `layers[].name`: human-readable layer name.
+- `layers[].source.kind`: one of `inline`, `store_path`, or `runtime_path`.
+- `layers[].source.value`: inline document for `inline` sources.
+- `layers[].source.path`: file path for `store_path` and `runtime_path` sources.
+- `layers[].from`: path to copy from inside the layer source.
+- `layers[].to`: path to merge into inside the assembled desired document.
+- `layers[].required`: whether the runtime must fail if the layer file or `from` path is missing.
 
 Current path semantics:
 
-- each path segment is a string key
-- path traversal currently supports object/table keys only
-- array indexes are not part of the contract yet
+- task-file `from` / `to` paths currently use string object keys only
 - root replacement is represented by `[]`
+- internal runtime edit-operation paths may additionally use integer array indices
 
 ## Home Manager module contract
 
@@ -96,9 +100,9 @@ The Home Manager module guarantees:
 
 - each target is relative to `home.homeDirectory`
 - each file defines at least one layer
-- each layer sets exactly one of `value`, `source`, or `path`
-- runtime `path` inputs are absolute
-- ownership rules use valid recursive modes
+- each layer sets exactly one source kind
+- runtime `runtime_path` inputs are absolute
+- ownership overrides use valid recursive modes
 - task files are generated at activation time from declarative options
 - the activation hook invokes a packaged runtime executable through `home.mutableFileRuntime.package`
 
@@ -114,9 +118,9 @@ The runtime guarantees:
 - schema version checking before execution
 - deterministic layer assembly for a fixed task file
 - overlap validation before any local-file comparison or writes
-- semantic conflict detection against baseline state and managed-field takeovers
-- no platform-specific behavior in core reconciliation logic
-- format adaptation through subprocess boundaries rather than ambient shell snippets
+- local-history-aware conflict detection using previous state snapshots
+- write planning from `desired_diff` rather than whole-file replacement
+- format adaptation behind explicit implementations rather than shell snippets in the core merge logic
 
 ## Layer merge contract
 
@@ -134,48 +138,72 @@ Rejected overlap:
 - `object` with existing `array`
 - identical scalar or array writes from different layers
 
-The runtime treats all rejected overlap as configuration errors, not runtime conflicts.
+Rejected overlap is a configuration error, not a local-file conflict.
 
 ## Ownership policy contract
 
-Ownership determines how fields not declared by layers are treated.
+Ownership determines how undeclared fields and local-only subtrees are handled.
 
-- `declared`: only fields declared by layers are managed. Undeclared fields are ignored and may change locally.
-- `sealed`: only fields declared by layers are managed. Undeclared fields under this subtree are conflicts.
+- `declared`: fields declared by layers are managed. Undeclared fields are ignored and may change locally.
+- `sealed`: fields declared by layers are managed. Undeclared fields under this subtree are conflicts.
 - `local`: the subtree is runtime-transparent. Layers may not write into it, and local changes are ignored.
 
-Rules inherit recursively: a child path uses the most specific matching rule, otherwise `default_mode`.
+Rules inherit recursively: a child path uses the most specific matching override, otherwise `fallback`.
 
-## Deletion contract
+## State contract
 
-There is no standalone unknown-field removal policy.
+The runtime stores one state snapshot per document.
 
-Fields are deleted only when:
+Current state shape:
 
-- a field was previously managed and no longer exists in the merged desired document
-- a managed subtree changes shape and previously managed descendants disappear as a result
+```json
+{
+  "version": 1,
+  "document_id": "<sha256(target)>",
+  "format": "toml",
+  "ownership": {
+    "fallback": "declared",
+    "overrides": []
+  },
+  "previous_applied": {
+    "app": { "name": "demo" }
+  },
+  "previous_desired": {
+    "app": { "name": "demo" }
+  }
+}
+```
 
-Fields that were never declared by layers are either ignored, treated as conflicts, or left fully local depending on ownership mode.
+The runtime treats missing or incompatible state as if no previous state existed.
 
-## Managed takeover contract
+## Operation contract
 
-When layers begin declaring a field that already exists in the current local file:
+The semantic diff layer produces ordered operations.
 
-- if the current value equals the desired value, takeover succeeds without conflict
-- if the current value differs, takeover is a conflict
+Current operation kinds:
 
-This avoids silently overwriting previously local state while still allowing convergence when values already match.
+- `set(path, value)`
+- `remove(path)`
+- `insert(path, value)`
 
-## Format adapter model
+Semantics:
 
-The runtime is structured around format adapters.
+- `set` creates or replaces an object field or existing array element
+- `remove` removes an object field or array element
+- `insert` inserts an array element before the given index
 
-Current state:
+Operation order matters. In particular, array edits must be applied in the order produced by the diff planner.
 
-- `json`: implemented for current-file loading, layer loading, rendering, and reconcile path
-- `yaml`: implemented through packaged `yq-go` (`mikefarah/yq`) conversions to and from JSON
-- `toml`: implemented through Python `tomlkit`
+## Reconcile contract
 
-For YAML, the runtime renders the desired base document, patches only the managed paths on a temporary working copy via `yq-go -i`, and atomically writes the final result.
+For each document the runtime:
 
-For TOML, the runtime parses the current file with `tomlkit`, computes canonical managed subtrees through plain Python values, and patches only the managed TOML paths back into the original document before writing.
+1. assembles `current_desired` from all layers
+2. loads `current_local` from the target file
+3. loads `previous_applied` and `previous_desired` from state if present
+4. computes `local_diff` and `desired_diff`
+5. detects ownership-aware conflicts from local changes and takeovers
+6. plans writes only for paths touched by `desired_diff`
+7. applies those operations through the selected format implementation
+8. re-loads the rendered text and verifies its semantic value
+9. atomically writes the target and persists the new snapshot

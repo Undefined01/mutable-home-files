@@ -10,7 +10,6 @@ Responsibilities:
 
 - define `home.mutableFiles`
 - define `home.mutableFileRuntime.package`
-- define recursive ownership policy inputs
 - validate target, ownership, and layer options
 - normalize file definitions into runtime task files
 - register switch-time activation hooks via `home.activation`
@@ -19,16 +18,19 @@ Responsibilities:
 
 ### Runtime
 
-The runtime is a Python CLI.
+The runtime is a Python CLI with a semantic core and format-specific implementations.
 
 Responsibilities:
 
-- load task files emitted by the Home Manager module
+- decode task files emitted by the Home Manager module
 - load ordered layers from declarative values, store paths, and runtime paths
-- merge layers into one desired object while rejecting ambiguous overlap
-- evaluate local files through recursive ownership policy
-- compare managed state against recorded runtime state
-- reconcile managed content into target files while preserving unmanaged TOML and YAML content where the adapter model allows it
+- assemble layers into one desired object while rejecting ambiguous overlap
+- load current local documents and previous state snapshots
+- compute local diffs and desired diffs independently
+- plan writes from desired changes only
+- detect ownership-aware conflicts before editing files
+- apply edits through JSON, YAML, and TOML implementations
+- verify semantic correctness after render
 - atomically write targets and update runtime state
 
 ## Core design constraints
@@ -36,10 +38,31 @@ Responsibilities:
 The system is designed around these constraints:
 
 - layer overlap must be explicit and deterministic
-- undeclared fields need different handling in different subtrees
+- local edits and layer edits must be evaluated separately
 - local state must not be silently taken over when a layer starts managing a path
-- deletion must only target paths that were previously managed
-- YAML and TOML comments should survive outside the managed write set whenever possible
+- deletion must only target paths removed from previous desired state
+- unchanged fields should not be rewritten just because they are managed
+- YAML and TOML comments and key order should survive outside the edited write set whenever possible
+
+## Semantic model
+
+The runtime reasons about four semantic documents:
+
+- `previous_applied`
+- `previous_desired`
+- `current_local`
+- `current_desired`
+
+Those produce two diffs:
+
+- `local_diff = diff(previous_applied, current_local)`
+- `desired_diff = diff(previous_desired, current_desired)`
+
+This split is the key architectural change. It separates:
+
+- what changed locally
+- what changed declaratively
+- what the runtime is allowed to write in this run
 
 ## Ownership model
 
@@ -49,9 +72,9 @@ The runtime applies one recursive ownership mode at each path.
 - `sealed`: only layer-declared fields are managed; undeclared fields are conflicts
 - `local`: the subtree is entirely local and runtime-transparent
 
-The effective mode is resolved by longest matching rule, falling back to the file's default ownership mode.
+The effective mode is resolved by longest matching override, falling back to the file's `fallback` mode.
 
-## Layer merge model
+## Layer assembly model
 
 The runtime first builds a single desired object from all layers.
 
@@ -70,37 +93,64 @@ Rejected merge:
 
 Rejected overlap is a configuration error, not a local-file conflict.
 
+## Operation model
+
+The runtime core does not patch text directly. It emits ordered semantic edit operations:
+
+- `set`
+- `remove`
+- `insert`
+
+Object changes are represented with `set` and `remove`.
+Array changes additionally use `insert` so the runtime can modify only changed regions instead of rewriting whole arrays.
+
+## Format implementation model
+
+Each format implementation provides the same interface:
+
+- load semantic document from file or text
+- create text for a brand-new file
+- apply ordered operations to existing text
+
+Implementations:
+
+- JSON: ordered-object editing and deterministic dump
+- YAML: `ruamel.yaml` round-trip editing
+- TOML: `tomlkit` round-trip editing
+
+The format implementation is also responsible for preserving untouched ordering, comments, and layout as far as its underlying library allows.
+
 ## State model
 
-The runtime keeps one state record per target entry.
+The runtime keeps one state snapshot per target document.
 
-That state must be rich enough to answer:
+That snapshot records:
 
-- which paths were previously managed
-- what values those paths last converged to
-- which ownership policy was active during the last successful apply
+- the full local semantic document after the last successful apply
+- the full desired semantic document used for that apply
+- the ownership policy used for that apply
 
-Without that information, the runtime cannot distinguish managed deletion from never-managed unknown fields or safe takeover from destructive overwrite.
+Old or incompatible state is discarded instead of migrated.
 
 ## Packaging model
 
 - `runtime/package.nix` builds the Python CLI as the `mutable-file-runtime` executable.
-- The wrapper sets `MUTABLE_FILE_YQ_BIN` to the packaged `yq-go` binary, so runtime format adaptation does not depend on ambient `PATH` state.
-- `runtime/package.nix` also exports package-level `passthru.tests.pytest`, following the nixpkgs pattern of keeping package tests buildable without changing the main output.
+- The runtime depends on `tomlkit` and `ruamel.yaml`.
+- `runtime/package.nix` exposes package-level `passthru.tests.pytest` so runtime verification remains buildable without changing the main package output.
 - `flake.nix` exports the runtime as both `packages.<system>.mutable-file-runtime` and `packages.<system>.default`.
-- `flake.nix` also exports `apps.<system>.mutable-file-runtime` for direct execution, a default `devShell` with `python3`, `pytest`, `yq-go`, and `nixfmt-tree`, and lightweight flake checks for Home Manager evaluation plus runtime package tests.
+- `flake.nix` also exports `apps.<system>.mutable-file-runtime`, a default `devShell`, and lightweight flake checks for Home Manager evaluation plus runtime package tests.
 
 ## Testing model
 
-- Runtime package tests follow the nixpkgs `passthru.tests` style: the package exposes a separate pytest derivation so package verification is buildable without changing the main package output.
-- Home Manager module tests stay in the lightweight evaluation lane: they assert on generated task payloads and activation blocks rather than booting a VM.
-- Full NixOS-style VM integration tests are still deferred because the current module primarily generates user configuration and switch-time tasks rather than long-running services.
+- Runtime tests are organized by semantic phase: schema, assembly, diff, merge, format implementations, and end-to-end reconcile.
+- Home Manager module tests remain lightweight evaluation tests that assert on generated payloads and activation hooks.
+- Verification must cover both semantic correctness and round-trip preservation for YAML/TOML comments and ordering.
 
 ## Home Manager integration notes
 
 ### Generic activation
 
-The primary switch-time integration point is:
+The primary switch-time integration point remains:
 
 ```nix
 home.activation.mutableFiles = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
@@ -109,14 +159,12 @@ home.activation.mutableFiles = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
 '';
 ```
 
-This is the canonical location for side-effecting runtime actions. The block should respect Home Manager's activation driver semantics by using helpers such as `run`, `verboseEcho`, and the `writeBoundary` ordering constraint.
+This remains the canonical location for side-effecting runtime actions.
 
 ### Linux
 
-Linux-specific persistent integration, if needed in the future, uses `systemd.user.services`.
+Linux-specific persistent integration, if needed later, uses `systemd.user.services`.
 
 ### Darwin
 
-Darwin-specific persistent integration, if needed in the future, uses `launchd.agents`.
-
-Home Manager manages launch agents through activation logic in its launchd module, so Darwin-specific behavior must not assume Linux-style `systemd` semantics.
+Darwin-specific persistent integration, if needed later, uses `launchd.agents`.
