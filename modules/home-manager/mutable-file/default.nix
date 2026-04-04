@@ -16,7 +16,7 @@ let
     ;
 
   cfg = config.home.mutableFiles;
-  stateRoot = ''${config.xdg.stateHome}/mutable-file'';
+  stateDir = ''${config.xdg.stateHome}/mutable-file'';
 
   pathSegmentsType = types.listOf types.str;
   ownershipModeType = types.enum [ "declared" "sealed" "local" ];
@@ -59,7 +59,8 @@ let
   layerType = types.submodule ({ ... }: {
     options = {
       name = mkOption {
-        type = types.str;
+        type = types.nullOr types.str;
+        default = null;
         description = "Human-readable layer name used in generated task payloads and diagnostics.";
       };
 
@@ -143,54 +144,58 @@ let
     };
   });
 
-  layerSourceKind = layer:
-    if layer.value != null then "value"
-    else if layer.source != null then "source"
-    else "path";
-
-  layerSourcePayload = layer:
-    if layer.value != null then layer.value
-    else if layer.source != null then toString layer.source
-    else layer.path;
+  layerSource = layer:
+    if layer.value != null then {
+      kind = "inline";
+      value = layer.value;
+    }
+    else if layer.source != null then {
+      kind = "store_path";
+      path = toString layer.source;
+    }
+    else {
+      kind = "runtime_path";
+      path = layer.path;
+    };
 
   normalizedLayers = entry:
     builtins.genList
       (index:
         let
           layer = builtins.elemAt entry.layers index;
+          resolvedName = if layer.name != null then layer.name else "layer" + toString index;
         in
         {
-          layer_id = builtins.hashString "sha256" "${toString index}:${layer.name}:${builtins.toJSON layer.from}:${builtins.toJSON layer.to}";
-          name = layer.name;
-          source_kind = layerSourceKind layer;
-          source_payload = layerSourcePayload layer;
-          from_path = layer.from;
-          to_path = layer.to;
+          id = builtins.hashString "sha256" "${toString index}:${resolvedName}:${builtins.toJSON layer.from}:${builtins.toJSON layer.to}";
+          name = resolvedName;
+          source = layerSource layer;
+          from = layer.from;
+          to = layer.to;
           required = layer.required;
         })
       (builtins.length entry.layers);
 
   normalizedOwnership = entry: {
-    default_mode = entry.ownership.default;
-    rules = builtins.map (rule: {
+    fallback = entry.ownership.default;
+    overrides = builtins.map (rule: {
       inherit (rule) path mode;
     }) entry.ownership.rules;
   };
 
-  entryTask = target: entry: {
-    entry_id = builtins.hashString "sha256" target;
+  documentTask = target: entry: {
+    id = builtins.hashString "sha256" target;
     target = target;
     format = entry.format;
     create = entry.create;
     mode = entry.mode;
-    state_root = stateRoot;
+    state_dir = stateDir;
     ownership = normalizedOwnership entry;
     layers = normalizedLayers entry;
   };
 
   taskPayload = {
-    version = 3;
-    entries = builtins.attrValues (mapAttrs' (target: entry: nameValuePair target (entryTask target entry)) cfg);
+    version = 4;
+    documents = builtins.attrValues (mapAttrs' (target: entry: nameValuePair target (documentTask target entry)) cfg);
   };
 
   taskFile = pkgs.writeText "mutable-file-runtime-tasks.json" (builtins.toJSON taskPayload);

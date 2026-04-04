@@ -48,7 +48,7 @@ let
       expected = false;
     };
 
-  expectedEntryId = target: builtins.hashString "sha256" target;
+  expectedDocumentId = target: builtins.hashString "sha256" target;
   expectedLayerId = index: name: from: to:
     builtins.hashString "sha256" "${toString index}:${name}:${builtins.toJSON from}:${builtins.toJSON to}";
 in
@@ -94,32 +94,34 @@ lib.runTests {
         }
       ]).config.home.mutableFilesInternal.taskPayload;
     expected = {
-      version = 3;
-      entries = [
+      version = 4;
+      documents = [
         {
-          entry_id = expectedEntryId ".config/demo/config.toml";
+          id = expectedDocumentId ".config/demo/config.toml";
           target = ".config/demo/config.toml";
           format = "toml";
           create = true;
           mode = "0600";
-          state_root = "/home/tester/.local/state/mutable-file";
+          state_dir = "/home/tester/.local/state/mutable-file";
           ownership = {
-            default_mode = "declared";
-            rules = [
+            fallback = "declared";
+            overrides = [
               { path = [ "runtime" ]; mode = "local"; }
             ];
           };
           layers = [
             {
-              layer_id = expectedLayerId 0 "defaults" [ ] [ ];
+              id = expectedLayerId 0 "defaults" [ ] [ ];
               name = "defaults";
-              source_kind = "value";
-              source_payload = {
-                app = { name = "demo"; };
-                runtime = { enabled = false; };
+              source = {
+                kind = "inline";
+                value = {
+                  app = { name = "demo"; };
+                  runtime = { enabled = false; };
+                };
               };
-              from_path = [ ];
-              to_path = [ ];
+              from = [ ];
+              to = [ ];
               required = true;
             }
           ];
@@ -160,38 +162,42 @@ lib.runTests {
             ];
           };
         }
-      ]).config.home.mutableFilesInternal.taskPayload.entries;
+      ]).config.home.mutableFilesInternal.taskPayload.documents;
     expected = [
       {
-        entry_id = expectedEntryId ".config/demo/config.yaml";
+        id = expectedDocumentId ".config/demo/config.yaml";
         target = ".config/demo/config.yaml";
         format = "yaml";
         create = false;
         mode = "0640";
-        state_root = "/tmp/custom-state/mutable-file";
+        state_dir = "/tmp/custom-state/mutable-file";
         ownership = {
-          default_mode = "declared";
-          rules = [
+          fallback = "declared";
+          overrides = [
             { path = [ "credentials" ]; mode = "sealed"; }
           ];
         };
         layers = [
           {
-            layer_id = expectedLayerId 0 "defaults" [ ] [ "docs" ];
+            id = expectedLayerId 0 "defaults" [ ] [ "docs" ];
             name = "defaults";
-            source_kind = "source";
-            source_payload = toString (repoRoot + "/README.md");
-            from_path = [ ];
-            to_path = [ "docs" ];
+            source = {
+              kind = "store_path";
+              path = toString (repoRoot + "/README.md");
+            };
+            from = [ ];
+            to = [ "docs" ];
             required = true;
           }
           {
-            layer_id = expectedLayerId 1 "runtime-secret" [ "profiles" "default" ] [ "profiles" "default" ];
+            id = expectedLayerId 1 "runtime-secret" [ "profiles" "default" ] [ "profiles" "default" ];
             name = "runtime-secret";
-            source_kind = "path";
-            source_payload = "/run/secrets/runtime.json";
-            from_path = [ "profiles" "default" ];
-            to_path = [ "profiles" "default" ];
+            source = {
+              kind = "runtime_path";
+              path = "/run/secrets/runtime.json";
+            };
+            from = [ "profiles" "default" ];
+            to = [ "profiles" "default" ];
             required = false;
           }
         ];
@@ -226,50 +232,54 @@ lib.runTests {
             };
           };
         }
-      ]).config.home.mutableFilesInternal.taskPayload.entries;
+      ]).config.home.mutableFilesInternal.taskPayload.documents;
     expected = [
       {
-        entry_id = expectedEntryId ".config/a-first.toml";
+        id = expectedDocumentId ".config/a-first.toml";
         target = ".config/a-first.toml";
         format = "toml";
         create = true;
         mode = "0600";
-        state_root = "/home/tester/.local/state/mutable-file";
+        state_dir = "/home/tester/.local/state/mutable-file";
         ownership = {
-          default_mode = "declared";
-          rules = [ ];
+          fallback = "declared";
+          overrides = [ ];
         };
         layers = [
           {
-            layer_id = expectedLayerId 0 "a" [ ] [ ];
+            id = expectedLayerId 0 "a" [ ] [ ];
             name = "a";
-            source_kind = "value";
-            source_payload = { a = 1; };
-            from_path = [ ];
-            to_path = [ ];
+            source = {
+              kind = "inline";
+              value = { a = 1; };
+            };
+            from = [ ];
+            to = [ ];
             required = true;
           }
         ];
       }
       {
-        entry_id = expectedEntryId ".config/z-last.toml";
+        id = expectedDocumentId ".config/z-last.toml";
         target = ".config/z-last.toml";
         format = "toml";
         create = true;
         mode = "0600";
-        state_root = "/home/tester/.local/state/mutable-file";
+        state_dir = "/home/tester/.local/state/mutable-file";
         ownership = {
-          default_mode = "declared";
-          rules = [ ];
+          fallback = "declared";
+          overrides = [ ];
         };
         layers = [
           {
-            layer_id = expectedLayerId 0 "z" [ ] [ ];
+            id = expectedLayerId 0 "z" [ ] [ ];
             name = "z";
-            source_kind = "value";
-            source_payload = { z = 1; };
-            from_path = [ ];
-            to_path = [ ];
+            source = {
+              kind = "inline";
+              value = { z = 1; };
+            };
+            from = [ ];
+            to = [ ];
             required = true;
           }
         ];

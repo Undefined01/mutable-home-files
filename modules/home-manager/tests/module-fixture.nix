@@ -6,7 +6,11 @@
 
   home.mutableFiles.".config/demo/config.json" = {
     format = "json";
-    preserve = [ [ "runtime" ] ];
+    ownership = {
+      rules = [
+        { path = [ "runtime" ]; mode = "local"; }
+      ];
+    };
     layers = [
       {
         name = "defaults";
