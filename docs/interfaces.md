@@ -114,10 +114,37 @@ The runtime guarantees:
 - schema version checking before execution
 - deterministic layer assembly for a fixed task file
 - overlap validation before any local-file comparison or writes
-- local-history-aware conflict detection using previous state snapshots
-- write planning from `desired_diff` rather than whole-file replacement
+- git-backed state storage in one bare repository per `state_dir`
+- raw local history in `live` and managed declarative history in `applied`
+- conflict-session branches `desired`, `local`, and `resolve`
+- a fixed resolve worktree that persists across retries until completion or abort
 - format adaptation behind explicit implementations rather than shell snippets in the core merge logic
-- state-key derivation from the final absolute target path rather than external ids
+
+## Runtime state contract
+
+The runtime repository keeps these persistent branches:
+
+- `live`
+- `applied`
+
+And these conflict-session branches when needed:
+
+- `desired`
+- `local`
+- `resolve`
+
+Tree layout rules:
+
+- target files are mapped by removing the leading slash from the absolute target path
+- `.mutable-file/task.json` is reserved for the task snapshot stored in `applied`
+
+Representation rules:
+
+- `live` stores raw target text exactly as written to disk
+- `applied` stores prettified managed-view text in the file's declared format
+- Git blobs are always parsed back through format implementations before semantic comparison
+
+Missing or incompatible old JSON snapshot files are ignored.
 
 ## Layer merge contract
 
@@ -142,76 +169,56 @@ Rejected overlap is a configuration error, not a local-file conflict.
 Ownership determines how undeclared fields and local-only subtrees are handled.
 
 - `declared`: fields declared by layers are managed. Undeclared fields are ignored and may change locally.
-- `sealed`: fields declared by layers are managed. Undeclared fields under this subtree are conflicts.
+- `sealed`: the whole subtree participates in the managed view. Undeclared fields under this subtree are conflicts.
 - `local`: the subtree is runtime-transparent. Layers may not write into it, and local changes are ignored.
 
 Rules inherit recursively: a child path uses the most specific matching rule, otherwise `default`.
 
-## State contract
+## Conflict-session contract
 
-The runtime stores one state snapshot per document.
+When local changes conflict with the current declarative managed view, the runtime:
 
-Current state shape:
+1. leaves `live` and `applied` unchanged
+2. writes the current desired managed view into `desired`
+3. writes the current local applied view into `local`
+4. checks out `resolve` in the fixed resolve worktree
+5. starts a Git merge so the user can inspect and resolve it manually
 
-```json
-{
-  "version": 1,
-  "target": "/home/user/.config/example/config.toml",
-  "format": "toml",
-  "ownership": {
-    "default": "declared",
-    "rules": []
-  },
-  "previous_applied": {
-    "app": { "name": "demo" }
-  },
-  "previous_desired": {
-    "app": { "name": "demo" }
-  }
-}
-```
+Later runs obey this rule:
 
-The runtime treats missing or incompatible state as if no previous state existed.
+- if `resolve` is still an in-progress merge, the runtime refuses to continue until the user finishes or aborts it
+- if `resolve` already has a merge commit, the runtime reuses that merge result instead of recomputing the local conflict basis
+
+A pending resolution is accepted only when:
+
+- `resolve` still matches the current task-derived managed view
+- the current local applied projection still matches the stored `local` branch
+
+Pending-resolution apply is driven by `diff(local, resolve)`, which allows manual deletions, including sealed-field cleanup, to affect the real target file even when the task-derived managed view did not change.
+
+## Reconcile contract
+
+The runtime reconciles one `state_dir` group at a time.
+For each group it:
+
+1. assembles each document's desired object from layers
+2. projects each desired object into its managed view
+3. loads each current local file from the absolute target path
+4. loads previous `live` / `applied` history from the state repository
+5. detects ownership-aware conflicts from local changes and takeovers
+6. either starts or resumes a conflict session, or computes write operations for every document in the group
+7. applies those operations through the selected format implementation
+8. re-loads rendered text and verifies its semantic value
+9. atomically updates all target files in the group and then advances `live` / `applied`
 
 ## Edge cases
 
 The current interface and runtime semantics intentionally define these edge cases:
 
-- first apply with no state but an existing target uses takeover semantics and does not delete undeclared fields
-- a missing target with existing state is treated as a conflict rather than silently recreating the file
+- first apply with no Git state but an existing target uses takeover semantics and does not delete undeclared fields
+- a missing target with existing `live` history is treated as a conflict rather than silently recreating the file
 - ownership changes to `local` stop management of that subtree without deleting local content
 - `sealed` rejects undeclared fields even if they predate the current run
 - layer `from` / `to` paths do not yet expose array addressing even though runtime edit operations do
-- old task files and old state snapshots are ignored rather than migrated
-
-## Operation contract
-
-The semantic diff layer produces ordered operations.
-
-Current operation kinds:
-
-- `set(path, value)`
-- `remove(path)`
-- `insert(path, value)`
-
-Semantics:
-
-- `set` creates or replaces an object field or existing array element
-- `remove` removes an object field or array element
-- `insert` inserts an array element before the given index
-
-Operation order matters. In particular, array edits must be applied in the order produced by the diff planner.
-
-## Reconcile contract
-
-For each document the runtime:
-
-1. assembles `current_desired` from all layers
-2. loads `current_local` from the absolute target path
-3. loads `previous_applied` and `previous_desired` from state if present
-4. computes `local_diff` and `desired_diff`
-5. detects ownership-aware conflicts from local changes and takeovers
-6. plans writes only for paths touched by `desired_diff`
-7. applies those operations through the selected format implementation
-8. re-loads the rendered text and verifies its semantic value
-9. atomically writes the target and persists the new snapshot
+- targets removed from the current task file are removed from Git state on the next successful run but are not deleted locally
+- old task files and old JSON snapshots are ignored rather than migrated

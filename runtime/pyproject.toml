@@ -8,6 +8,11 @@ dependencies = [
     "tomlkit>=0.14.0",
 ]
 
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
+
 [project.scripts]
 mutable-file-runtime = "mutable_file_runtime.main:main"
 

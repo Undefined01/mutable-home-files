@@ -3,12 +3,13 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from mutable_file_runtime.reconcile import reconcile_document
+from mutable_file_runtime.reconcile import reconcile_documents
 from mutable_file_runtime.task_schema import load_task_file
 
 
@@ -19,8 +20,12 @@ def main(argv=None):
 
     task_file = load_task_file(args.task_file)
 
+    groups = defaultdict(list)
     for document in task_file.documents:
-        reconcile_document(document)
+        groups[document.state_dir].append(document)
+
+    for documents in groups.values():
+        reconcile_documents(documents)
 
     summary = {
         "document_count": len(task_file.documents),

@@ -81,6 +81,36 @@ def diff_documents(old, new) -> tuple[EditOp, ...]:
 
 
 
+def format_ops_for_error(left_name: str, right_name: str, ops: Iterable[EditOp], left, right) -> str:
+    lines: list[str] = []
+    for operation in ops:
+        path = ".".join(str(segment) for segment in operation.path) or "<root>"
+        if isinstance(operation, RemoveOp):
+            lines.append(f"{path}: {left_name}={json.dumps(_lookup_value(left, operation.path), sort_keys=True)} {right_name}=<missing>")
+            continue
+        lines.append(
+            f"{path}: {left_name}={json.dumps(_lookup_value(left, operation.path), sort_keys=True)} "
+            f"{right_name}={json.dumps(getattr(operation, 'value', _lookup_value(right, operation.path)), sort_keys=True)}"
+        )
+    return "; ".join(lines)
+
+
+
+def _lookup_value(document, path: PathType):
+    cursor = document
+    for segment in path:
+        if isinstance(segment, int):
+            if not isinstance(cursor, list) or segment < 0 or segment >= len(cursor):
+                return None
+            cursor = cursor[segment]
+            continue
+        if not isinstance(cursor, dict) or segment not in cursor:
+            return None
+        cursor = cursor[segment]
+    return cursor
+
+
+
 def _empty_container(next_segment):
     return [] if isinstance(next_segment, int) else {}
 

@@ -30,38 +30,47 @@ Not implemented yet:
 Implemented:
 
 - task-file loading for schema version `5`
-- interface-oriented runtime split across schema, assembly, diff, merge, state, reconcile, and format implementations
+- interface-oriented runtime split across schema, assembly, diff, merge, projection, reconcile, and format implementations
 - ordered layer loading from `inline`, `store_path`, and `runtime_path` sources
 - overlap-validated layer assembly before any local comparison
 - absolute-target reconciliation without `--home-directory`
-- state snapshots with `previous_applied` and `previous_desired`
-- runtime state keys derived internally from the absolute target path
+- git-backed runtime state in one bare repository per `state_dir`
+- persistent `live` and `applied` branches
+- raw target text history in `live`
+- prettified managed-view history in `applied`
+- `.mutable-file/task.json` snapshots in `applied`
+- ownership-aware projections for desired and local applied views
 - ownership-aware merge planning with `declared`, `sealed`, and `local`
 - takeover detection for newly managed fields
-- deletions driven only by paths removed from previous desired state
 - ordered semantic operations: `set`, `remove`, and `insert`
 - JSON format implementation for semantic load and operation-based rewrite
 - YAML format implementation through `ruamel.yaml` round-trip editing
 - TOML format implementation through `tomlkit` round-trip editing
 - semantic verification after render before atomic write
+- fixed conflict-session branches: `desired`, `local`, and `resolve`
+- fixed resolve worktree under the runtime state directory
+- reuse of an existing `resolve` merge commit on later runs
+- pending-resolution apply driven by `diff(local, resolve)` so sealed-field cleanup can take effect
+- repo-level reconciliation per `state_dir` so one run can update multiple targets atomically
 - runtime Nix package and package-level `passthru.tests.pytest`
-- runtime unit coverage for schema, assembly, diff, merge, format implementations, and end-to-end reconcile
+- runtime unit coverage for schema, assembly, diff, merge, git-backed state, format implementations, conflict sessions, and end-to-end reconcile
 
 Not implemented yet:
 
-- history or commit graph storage
-- ownership migration logic across older state formats
+- multiple simultaneous conflict sessions in one state repository
+- old JSON snapshot migration into the Git state repository
+- richer locking than the current single-process assumption
 - declarative array path support in layer projection
 - advanced merge strategies beyond strict object/object layer overlap
 
 Environment note:
 
-- the dev shell and packaged runtime provide `ruamel.yaml` and `tomlkit`
-- old runtime state snapshots are ignored rather than migrated
+- the dev shell and packaged runtime provide `git`, `ruamel.yaml`, and `tomlkit`
+- old runtime JSON snapshots are ignored rather than migrated
 
 ## Verification targets
 
-- `nix develop path:. -c pytest runtime/tests -q`
+- `nix develop path:. -c python -m pytest runtime/tests -q`
 - `nix build path:.#test-runtime-pytest`
 - `nix build path:.#test-home-manager-eval`
 - `nix build path:.#test-all`
@@ -70,6 +79,6 @@ Environment note:
 
 ## Next step
 
-1. decide whether array-addressing should be exposed in Home Manager `from` / `to`
-2. refine merge semantics for more complex array edits and ordering hints
-3. design the future history layer on top of the new state-snapshot core
+1. harden locking around the shared state repository and resolve worktree lifecycle
+2. decide whether array-addressing should be exposed in Home Manager `from` / `to`
+3. refine conflict-session UX and diagnostics around abort/resume flows

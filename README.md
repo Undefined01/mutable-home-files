@@ -3,7 +3,7 @@
 `mutable-file` is split into two primary parts:
 
 - `modules/home-manager/`: pure Nix code providing Home Manager modules and lightweight evaluation tests.
-- `runtime/`: a Python runtime that assembles layered desired objects, computes local and declarative diffs independently, and reconciles mutable targets through format-specific editors.
+- `runtime/`: a Python runtime that assembles layered desired objects, tracks git-backed runtime state, and reconciles mutable targets through format-specific editors.
 
 The design goal is to let declarative configuration and local mutable state coexist in the same file without whole-file ownership or whole-file rewrites.
 
@@ -13,6 +13,7 @@ Use `nix develop` for local work. The dev shell provides the tools needed for th
 
 - `python3` for runtime development and tests
 - `pytest` for runtime test execution
+- `git` for the runtime state repository and conflict worktrees
 - `tomlkit` for TOML round-trip editing
 - `ruamel.yaml` for YAML round-trip editing
 - `nixfmt-tree` for Nix formatting
@@ -39,7 +40,7 @@ The project therefore splits the problem into three independent concerns:
 
 - layers declare desired data from one or more sources
 - ownership controls how undeclared fields behave at each subtree
-- runtime state snapshots separate local edits from declarative edits across runs
+- git-backed runtime state separates raw local history from managed declarative history across runs
 
 This lets declarative defaults, runtime secrets, and local application state coexist without silently overwriting one another.
 
@@ -72,36 +73,50 @@ Ownership determines how undeclared fields behave:
 
 The runtime consumes a schema v5 task file with absolute targets and no explicit document or layer ids.
 
-It works in semantic phases:
+Current runtime state is git-backed:
 
-1. assemble all layers into a single `current_desired` object
-2. load the current local file and the previous state snapshot
-3. compute `local_diff` and `desired_diff` independently
-4. reject ownership-aware conflicts before writing anything
-5. plan write operations only from `desired_diff`
+- one bare repository per `state_dir`
+- `live` stores raw target text from the last successful apply
+- `applied` stores prettified managed views plus `.mutable-file/task.json`
+- `desired`, `local`, and `resolve` drive conflict sessions in a fixed resolve worktree
+
+Normal successful runs work in semantic phases:
+
+1. assemble all layers into a single desired object
+2. project that object through ownership into the managed view
+3. load current local files and the previous `live` / `applied` history
+4. detect ownership-aware conflicts before writing anything
+5. plan write operations only for the semantic changes that should happen now
 6. apply those operations through JSON, YAML, or TOML implementations
-7. verify the rendered file semantically and persist a new state snapshot
+7. verify the rendered file semantically and update `live` / `applied`
+
+When local changes conflict with current declarative intent, the runtime creates a conflict session:
+
+- `desired` contains the current managed target view
+- `local` contains the current local applied view
+- `resolve` is checked out in a fixed worktree and merged against `local`
+- later runs reuse a merge commit on `resolve` until the user aborts or the session is accepted
 
 Important semantics:
 
 - object/object overlap between layers is allowed and merged recursively
 - any overlap involving arrays or scalars is rejected as a configuration error during assembly
-- fields are deleted only when they existed in `previous_desired` and were removed from `current_desired`
-- if a layer starts managing a field that already exists locally, identical values are accepted but differing values are conflicts
 - unchanged managed fields are not rewritten just because they are managed
-- runtime state paths are derived internally from the absolute target path
+- pending-resolution apply uses `diff(local, resolve)` so sealed-field cleanup can be carried back into the real file
+- targets that disappear from the task file are removed from Git state on the next successful run but are not deleted locally
 
 ## Edge cases and safety rules
 
 The current implementation intentionally handles several edge cases explicitly:
 
-- first apply with no state but an existing target uses takeover semantics and does not delete undeclared fields
-- a missing target with existing state is treated as a destructive local change and fails
+- first apply with no previous Git state but an existing target uses takeover semantics and does not delete undeclared fields
+- a missing target with existing `live` history is treated as a destructive local change and fails
 - ownership changes to `local` stop management of that subtree without deleting local content
 - `sealed` rejects undeclared fields even if they were already present before the current run
-- array edits preserve diff order through ordered `set` / `remove` / `insert` operations
+- pending-resolution sessions are reused across runs instead of silently recomputing the conflict basis
+- stale local files are rejected before an existing `resolve` merge commit is applied
 - declarative layer `from` / `to` paths still support only object keys; array indices are currently runtime-internal only
-- old task files and old state snapshots are ignored rather than migrated
+- old task files and old JSON snapshots are ignored rather than migrated
 
 ## Activation model
 
@@ -111,7 +126,7 @@ The activation block follows current Home Manager conventions for side-effecting
 
 ## Testing model
 
-- Runtime verification is split by phase: task schema, assembly, diff, merge, format implementations, and end-to-end reconcile.
+- Runtime verification is split by phase: task schema, assembly, diff, merge, git-backed state, format implementations, conflict sessions, and end-to-end reconcile.
 - Home Manager verification stays in the lightweight eval lane: direct evaluation of generated task payloads and activation blocks, not VM tests.
 - YAML verification uses `ruamel.yaml` round-trip editing behavior, and TOML verification uses `tomlkit` round-trip editing behavior.
 - Full aggregate checks are exposed through flake outputs and `nix run .#tests`.
@@ -123,3 +138,10 @@ Convenience flake test outputs are exposed as:
 - `.#test-all`
 
 A thin convenience runner is also exposed as `nix run .#tests`.
+
+## Further reading
+
+- [docs/git-backed-runtime-state.md](docs/git-backed-runtime-state.md)
+- [docs/architecture.md](docs/architecture.md)
+- [docs/interfaces.md](docs/interfaces.md)
+- [docs/status.md](docs/status.md)
