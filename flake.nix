@@ -42,7 +42,6 @@
           system,
         }:
         {
-          runtime-pytest = runtime.tests.pytest;
           home-manager-eval = mkHomeManagerEvalTest {
             inherit pkgs runtime system;
           };

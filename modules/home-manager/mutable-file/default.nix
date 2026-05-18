@@ -442,8 +442,7 @@ in
 
       home.packages = [ runtime ];
       home.activation.mutableFile = hm.dag.entryAfter [ "writeBoundary" ] ''
-        verboseEcho "Reconciling mutable files"
-        run --silence ${activationCommand}
+        ${activationCommand}
       '';
     })
   ];
