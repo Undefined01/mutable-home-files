@@ -105,7 +105,7 @@ def test_conflict_session_uses_git_merge_with_local_as_current_and_desired_as_in
         applied_object={"app": {"name": "demo"}},
     )
 
-    with pytest.raises(RuntimeError, match="resolve worktree"):
+    with pytest.raises(RuntimeError, match="resolve"):
         reconcile_document(document)
 
     assert json.loads(repo.read_target_text("desired", document.target)) == {"app": {"name": "declared"}}
@@ -158,7 +158,7 @@ def test_conflict_session_local_branch_uses_projection_basis_for_sealed_paths(ru
         applied_object={"app": {"name": "demo"}},
     )
 
-    with pytest.raises(RuntimeError, match="resolve worktree"):
+    with pytest.raises(RuntimeError, match="resolve"):
         reconcile_document(document)
 
     assert json.loads(repo.read_target_text("local", document.target)) == {
@@ -322,7 +322,7 @@ def test_pending_resolution_allows_deleted_managed_subtree(runtime_env):
         applied_object={"service": {"enabled": True}},
     )
 
-    with pytest.raises(RuntimeError, match="resolve worktree"):
+    with pytest.raises(RuntimeError, match="resolve"):
         reconcile_document(document)
 
     commit_resolve(repo, document.target, json.dumps({}, indent=2) + "\n")
@@ -379,7 +379,7 @@ def test_pending_resolution_declared_child_masks_sealed_ancestor_descendants(run
         applied_object={"service": {"runtime": {"name": "demo"}}},
     )
 
-    with pytest.raises(RuntimeError, match="resolve worktree"):
+    with pytest.raises(RuntimeError, match="resolve"):
         reconcile_document(document)
 
     assert json.loads(repo.read_target_text("local", document.target)) == {

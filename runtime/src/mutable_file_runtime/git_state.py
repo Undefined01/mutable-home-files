@@ -125,7 +125,20 @@ class GitStateRepo:
         self._git(["worktree", "add", "--force", str(self.resolve_worktree_path), "resolve"])
         merge = self._git_in_worktree(["-c", "merge.conflictstyle=diff3", "merge", "--no-commit", "desired"], check=False)
         if merge.returncode not in (0, 1):
-            raise RuntimeError(merge.stderr.strip() or "failed to create resolve worktree merge state")
+            detail = merge.stderr.strip() or "unknown Git error"
+            raise RuntimeError(
+                f"Failed to create resolve worktree merge state.\n"
+                f"\n"
+                f"Why: git merge of 'desired' into the resolve worktree failed.\n"
+                f"  {detail}\n"
+                f"\n"
+                f"How to fix:\n"
+                f"  cd {self.resolve_worktree_path}\n"
+                f"  git status   # inspect the worktree state\n"
+                f"  git merge --abort   # if the merge cannot proceed\n"
+                f"\n"
+                f"Repository: {self.repo_dir}"
+            )
 
     def clear_conflict_session(self) -> None:
         self.ensure_initialized()

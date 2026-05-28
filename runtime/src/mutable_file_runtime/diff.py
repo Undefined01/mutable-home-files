@@ -5,6 +5,7 @@ import difflib
 import json
 from typing import Iterable
 
+from .errors import cannot_insert_at_root, insert_requires_array_index
 from .model import EditOp, InsertOp, PathType, RemoveOp, SetOp, clone, is_mapping, is_sequence
 
 
@@ -168,12 +169,12 @@ def apply_ops(document, operations: Iterable[EditOp]):
             continue
 
         if path == ():
-            raise ValueError("cannot insert at document root")
+            raise ValueError(cannot_insert_at_root())
         if not isinstance(result, (dict, list)):
             result = _empty_container(path[0])
         parent = _ensure_parent(result, path)
         index = path[-1]
         if not isinstance(index, int):
-            raise ValueError("insert operations require an array index")
+            raise ValueError(insert_requires_array_index(operation.path))
         parent.insert(index, clone(operation.value))
     return result

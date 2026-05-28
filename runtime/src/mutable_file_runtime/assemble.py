@@ -2,6 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .errors import (
+    layer_overlap,
+    layer_targets_local,
+    required_layer_path_missing,
+    required_layer_source_missing,
+    root_not_object,
+)
 from .formats import get_format
 from .model import MISSING, clone
 
@@ -27,7 +34,7 @@ def _ensure_object_path(document, path):
 def _set_object_path(document, path, value):
     if path == ():
         if not isinstance(value, dict):
-            raise RuntimeError("root layer projection requires an object value")
+            raise RuntimeError(root_not_object())
         document.clear()
         document.update(clone(value))
         return
@@ -44,7 +51,7 @@ def _merge_layer_value(target, path, incoming, layer_name):
         for key, value in incoming.items():
             _merge_layer_value(target, path + (key,), value, layer_name)
         return
-    raise RuntimeError(f"incompatible layer overlap at {path}: {layer_name}")
+    raise RuntimeError(layer_overlap(path, layer_name))
 
 
 def _load_layer_source(document, layer):
@@ -53,7 +60,7 @@ def _load_layer_source(document, layer):
     source_path = Path(layer.source.path)
     if not source_path.exists():
         if layer.required:
-            raise RuntimeError(f"required layer source is missing: {layer.name}")
+            raise RuntimeError(required_layer_source_missing(layer.name, str(source_path)))
         return MISSING
     adapter = get_format(document.format)
     return adapter.load_file(source_path)
@@ -63,14 +70,14 @@ def assemble_document(document):
     desired = {}
     for layer in document.layers:
         if document.ownership.mode_for(layer.to_path) == "local":
-            raise RuntimeError(f"layer targets local ownership subtree: {layer.name} -> {layer.to_path}")
+            raise RuntimeError(layer_targets_local(layer.name, layer.to_path))
         layer_document = _load_layer_source(document, layer)
         if layer_document is MISSING:
             continue
         node = _lookup_mapping_path(layer_document, layer.from_path)
         if node is MISSING:
             if layer.required:
-                raise RuntimeError(f"required layer path missing: {layer.name} from {layer.from_path}")
+                raise RuntimeError(required_layer_path_missing(layer.name, layer.from_path))
             continue
         _merge_layer_value(desired, layer.to_path, node, layer.name)
     return desired
