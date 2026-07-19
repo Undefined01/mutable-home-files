@@ -30,7 +30,7 @@ let
   normalizedSource = source:
     if lib.isPath source then {
       kind = "store_path";
-      path = toString source;
+      path = pkgs.writeText "mutable-file-tasks-deps-${lib.baseNameOf source}" (lib.readFile source);
     } else {
       kind = "runtime_path";
       path = source;

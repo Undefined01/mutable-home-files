@@ -2,9 +2,9 @@
   description = "mutable-file Home Manager modules and runtime";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable?shallow=1";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     home-manager = {
-      url = "github:nix-community/home-manager/master?shallow=1";
+      url = "github:nix-community/home-manager/master";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
